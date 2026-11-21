@@ -1,0 +1,13 @@
+{
+  "source": "grokbot-bridge-herdr",
+  "version": "0.3.3",
+  "event": "agent_status",
+  "task_id": "task-example",
+  "pane_id": "term-example",
+  "status": "done",
+  "ts": "2026-01-01T00:00:00.000Z",
+  "owner": "grok-bot",
+  "route": "owner",
+  "backend": "hc",
+  "agent_kind": null
+}

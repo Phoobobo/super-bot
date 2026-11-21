@@ -1,0 +1,281 @@
+import path from 'node:path'
+import { Engine, type RequestInput } from './core/engine.js'
+import { UserError } from './core/errors.js'
+import type { EffectRow, Intensity, Preference, PreferencePatch, Proposal } from './core/model.js'
+import { AGENT_KINDS } from './core/model.js'
+import type { AdapterResult, GbbAdapter } from './gbb/adapter.js'
+import { FakeGbb, type FakeScript } from './gbb/fake.js'
+import { RealGbb } from './gbb/real.js'
+import { GBB_033, type CapabilityProfile } from './gbb/contract.js'
+import { initialPreference } from './preferences/defaults.js'
+import { applyPatch, buildProposal, optionOf } from './preferences/propose.js'
+import { unconfiguredProvider, type QuotaProvider } from './quota.js'
+import { Store } from './store.js'
+import type { TakeoverSnapshot } from './takeover/snapshot.js'
+import { trustListRow, type ListRow } from './takeover/snapshot.js'
+
+export interface Clock {
+  now(): Date
+  ms(): number
+}
+
+export function systemClock(): Clock {
+  return { now: () => new Date(), ms: () => Date.now() }
+}
+
+export interface RuntimeOptions {
+  dir: string
+  profile?: CapabilityProfile
+  adapter?: 'fake' | 'real'
+  mode?: 'dry-run' | 'live'
+  allowLive?: boolean
+  fakeScript?: FakeScript
+  quota?: QuotaProvider
+  clock?: Clock
+  autoDrain?: boolean
+  stuckAfterMs?: number
+  gbbBin?: string
+  spawn?: ConstructorParameters<typeof RealGbb>[0]['spawn']
+}
+
+export class Runtime {
+  readonly store: Store
+  readonly engine: Engine
+  readonly adapter: GbbAdapter
+  readonly clock: Clock
+  readonly profile: CapabilityProfile
+  private readonly autoDrain: boolean
+  private readonly stuckAfterMs: number
+
+  constructor(options: RuntimeOptions) {
+    this.clock = options.clock ?? systemClock()
+    this.profile = options.profile ?? GBB_033
+    this.autoDrain = options.autoDrain !== false
+    this.stuckAfterMs = options.stuckAfterMs ?? 15 * 60 * 1000
+    this.store = new Store(options.dir)
+    const kind = options.adapter ?? 'real'
+    this.adapter =
+      kind === 'fake'
+        ? new FakeGbb(this.profile, options.fakeScript)
+        : new RealGbb({
+            bin: options.gbbBin,
+            mode: options.mode ?? 'dry-run',
+            profile: this.profile,
+            allowLive: options.allowLive,
+            spawn: options.spawn,
+          })
+    this.engine = new Engine(this.store, () => this.clock.now(), {
+      profile: this.profile,
+      quota: options.quota ?? unconfiguredProvider,
+      promptDir: path.join(options.dir, 'prompts'),
+      gbbBin: options.gbbBin ?? 'gbb',
+    })
+    this.ensurePreference()
+    this.recover()
+  }
+
+  close(): void {
+    this.store.close()
+  }
+
+  async request(input: Omit<RequestInput, 'simulated'>): Promise<ReturnType<Engine['request']>> {
+    const result = this.engine.request({ ...input, simulated: this.adapter.mode === 'fake' })
+    if (this.autoDrain) await this.drain()
+    return result
+  }
+
+  async takeover(snapshot: TakeoverSnapshot): Promise<{ ticketId: string }> {
+    const result = this.engine.takeover(snapshot, this.adapter.mode === 'fake')
+    if (this.autoDrain) await this.drain()
+    return result
+  }
+
+  rejectListRow(row: ListRow): { trusted: false; reason: string } {
+    return trustListRow(row)
+  }
+
+  async callback(event: Parameters<Engine['callback']>[0]): Promise<ReturnType<Engine['callback']>> {
+    const result = this.engine.callback(event)
+    if (this.autoDrain) await this.drain()
+    return result
+  }
+
+  async evidence(
+    assignmentId: string,
+    producer: 'harness' | 'agent',
+    checks: { id: string; ok: boolean; detail?: string }[],
+    actor = 'grok-bot',
+  ): Promise<ReturnType<Engine['evidence']>> {
+    const result = this.engine.evidence(assignmentId, producer, checks, actor)
+    if (this.autoDrain) await this.drain()
+    return result
+  }
+
+  async cancel(ticketId: string, reason: string): Promise<ReturnType<Engine['cancel']>> {
+    const result = this.engine.cancel(ticketId, reason)
+    if (this.autoDrain) await this.drain()
+    return result
+  }
+
+  pause(): void {
+    this.store.atomic(() => this.store.setPaused(true))
+  }
+
+  async resume(): Promise<string[]> {
+    this.store.atomic(() => this.store.setPaused(false))
+    const opened = this.engine.resumeQueued()
+    if (this.autoDrain) await this.drain()
+    return opened
+  }
+
+  propose(changes: PreferencePatch): Proposal {
+    return this.store.atomic(() => {
+      const current = this.currentPreference()
+      validatePatch(changes)
+      const proposal = buildProposal(current, changes, this.clock.now().toISOString())
+      this.store.put('proposal', proposal.id, proposal)
+      return proposal
+    })
+  }
+
+  confirm(proposalId: string, optionId: string): Preference {
+    return this.store.atomic(() => {
+      const proposal = this.store.get<Proposal>('proposal', proposalId)
+      if (!proposal) throw new UserError('missing-proposal', '没有这条建议')
+      if (proposal.status !== 'open') throw new UserError('proposal-closed', '这条建议已经处理过')
+      const current = this.currentPreference()
+      if (proposal.baseVersion !== current.version) throw new UserError('proposal-stale', '偏好已经变过，请重新生成建议')
+      const option = optionOf(proposal, optionId)
+      if (option.id === 'keep' || Object.keys(option.patch).length === 0) {
+        proposal.status = 'kept'
+        proposal.chosen = option.id
+        this.store.put('proposal', proposal.id, proposal)
+        return current
+      }
+      const next = applyPatch(current, option.patch, this.clock.now().toISOString(), option.title)
+      this.store.put('preference', String(next.version), next)
+      this.store.setMeta('preference-current', next.version)
+      proposal.status = 'confirmed'
+      proposal.chosen = option.id
+      this.store.put('proposal', proposal.id, proposal)
+      return next
+    })
+  }
+
+  revert(version: number): Preference {
+    return this.store.atomic(() => {
+      const target = this.store.get<Preference>('preference', String(version))
+      if (!target) throw new UserError('missing-preference', `没有版本 ${version}`)
+      const current = this.currentPreference()
+      const next: Preference = {
+        ...target,
+        version: current.version + 1,
+        at: this.clock.now().toISOString(),
+        note: `撤回至版本 ${version}`,
+      }
+      this.store.put('preference', String(next.version), next)
+      this.store.setMeta('preference-current', next.version)
+      return next
+    })
+  }
+
+  currentPreference(): Preference {
+    const version = this.store.meta<number>('preference-current') ?? 1
+    const preference = this.store.get<Preference>('preference', String(version))
+    if (!preference) throw new UserError('no-preference', '没有当前偏好')
+    return preference
+  }
+
+  async tick(): Promise<void> {
+    this.engine.scanStuck(this.stuckAfterMs)
+    await this.drain()
+  }
+
+  async drain(max = 80): Promise<number> {
+    let steps = 0
+    for (; steps < max; steps += 1) {
+      const peeked = this.store.nextDueEffect(this.clock.ms())
+      if (!peeked) return steps
+      if (this.store.paused() && peeked.kind !== 'reply' && peeked.kind !== 'status') {
+        this.store.atomic(() => {
+          const current = this.store.effect(peeked.kind, peeked.key)
+          if (!current || current.status !== 'waiting') return
+          current.due = this.clock.ms() + 60_000
+          this.store.writeEffect(current)
+        })
+        continue
+      }
+      const claimed = this.store.claimEffect(peeked.kind, peeked.key, this.clock.ms())
+      if (!claimed) continue
+      await this.step(claimed)
+    }
+    throw new Error('effect drain did not settle')
+  }
+
+  view(ticketId: string): ReturnType<Engine['view']> {
+    return this.engine.view(ticketId)
+  }
+
+  inbox(): ReturnType<Engine['inbox']> {
+    return this.engine.inbox()
+  }
+
+  ack(messageId: string): ReturnType<Engine['ack']> {
+    return this.engine.ack(messageId)
+  }
+
+  private ensurePreference(): void {
+    if (this.store.meta<number>('preference-current')) return
+    const preference = initialPreference(this.clock.now().toISOString())
+    this.store.atomic(() => {
+      this.store.put('preference', '1', preference)
+      this.store.setMeta('preference-current', 1)
+      this.store.setLedger({ spent: 0, reserved: 0 })
+      this.store.setPaused(false)
+    })
+  }
+
+  private recover(): void {
+    this.store.atomic(() => {
+      for (const effect of this.store.effects()) {
+        if (effect.status !== 'running') continue
+        if (effect.idempotent) {
+          effect.status = 'waiting'
+          this.store.writeEffect(effect)
+        } else {
+          this.engine.recoverInFlight(effect)
+        }
+      }
+    })
+  }
+
+  private async step(row: EffectRow): Promise<void> {
+    let result: AdapterResult
+    try {
+      const prepared = this.engine.prepareCall(row)
+      if (!prepared) throw new Error(`nothing to call for ${row.kind}`)
+      if (prepared.op === 'reply') result = { outcome: 'ok', argv: [], simulated: this.adapter.mode === 'fake' }
+      else if (prepared.op === 'read') result = await this.adapter.read(prepared.args)
+      else result = await this.adapter[prepared.op](prepared.args)
+    } catch (error) {
+      this.engine.failClosed(row, error instanceof Error ? error.message : String(error))
+      return
+    }
+    this.engine.applyAdapterResult(row, result)
+  }
+}
+
+function validatePatch(changes: PreferencePatch): void {
+  if (changes.intensity && !(['low', 'normal', 'high'] as Intensity[]).includes(changes.intensity)) {
+    throw new UserError('bad-intensity', '强度只能是 low、normal、high')
+  }
+  if (changes.budget !== undefined && (!Number.isInteger(changes.budget) || changes.budget < 0)) {
+    throw new UserError('bad-budget', '预算要是非负整数')
+  }
+  for (const kind of [...(changes.authorizedKinds ?? []), ...(changes.executeSubstitutes ?? [])]) {
+    if (!AGENT_KINDS.includes(kind)) throw new UserError('bad-kind', `未知代理 ${kind}`)
+  }
+  if (changes.executeSubstitutes?.includes('pi')) {
+    throw new UserError('bad-substitute', 'pi 是执行首选，不能再写成它的替代')
+  }
+}

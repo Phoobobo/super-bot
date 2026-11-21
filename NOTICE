@@ -1,0 +1,20 @@
+super-bot is an independent draft. It does not contain source from the projects below.
+
+The domain flow Source → Trigger → Eval → Mandate / Ticket → Assignment → Executor,
+the single-writer Engine, Subscription fan-out, and transactional Effects plus Outbox
+follow the architecture of dsh-superagent-prototype:
+
+  https://github.com/deepseek-ai/dsh-superagent-prototype
+  commit 8c32a9dc5d72c033816c6a8110b37f40cf94fba4
+  Copyright (c) 2026 DeepSeek Harness Team
+  MIT License
+
+gbb behavior described in docs/ is taken from:
+
+  https://github.com/Phoobobo/grokbot-bridge-herdr
+  commit bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6
+  version 0.3.3
+  Copyright (c) Phoobobo
+  MIT License
+
+No gbb tree is vendored here, and this draft does not modify a gbb install.
