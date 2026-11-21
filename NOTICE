@@ -18,3 +18,16 @@ gbb behavior described in docs/ is taken from:
   MIT License
 
 No gbb tree is vendored here, and this draft does not modify a gbb install.
+
+The optional feature, bugfix, and verify workflows follow the step order of pstack,
+not its Cursor host:
+
+  https://github.com/cursor/plugins/tree/e58dd043600587dbaf58ba315e7f2b38373eeb43/pstack
+  commit e58dd043600587dbaf58ba315e7f2b38373eeb43
+  plugin version 0.15.44
+  playbooks pstack/skills/poteto-mode/playbooks/feature.md and bug-fix.md
+  Copyright (c) 2026 Lauren Tan
+  MIT License
+
+No pstack tree is vendored. Cursor skills, subagents, automations, and model
+routing are not included, and this draft does not claim to run poteto-mode.

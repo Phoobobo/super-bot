@@ -51,6 +51,20 @@
 4. **pi 不能新开时停住。** dsh 的角色模型是配置好的 Eval/Executor 模型。这里执行首选是 pi，不在 `launchKinds` 里就 `blocked`，除非偏好里已有确认过的替代。
 5. **没有面板、没有飞书/GitHub Source、没有 DSH 工具协议。** 那些是参考系统的部署，不是这份草稿要复刻的产品。
 
+## pstack 流程，不是第二个调度器
+
+可选协议来自 [pstack](https://github.com/cursor/plugins/tree/e58dd043600587dbaf58ba315e7f2b38373eeb43/pstack) 的 `e58dd043600587dbaf58ba315e7f2b38373eeb43`（v0.15.44，MIT，Copyright (c) 2026 Lauren Tan）。对照的 playbook 是 `pstack/skills/poteto-mode/playbooks/feature.md` 和 `bug-fix.md`。实现在 `src/workflow/protocol.ts`，状态写在工单的 `workflow` 上，派工仍由 `Engine` 单写者经 gbb 发出。
+
+| pstack 宿主 | 这里的替换 |
+| --- | --- |
+| `/poteto-mode`、custom mode、slash skill | 请求字段或偏好里的 `feature` / `bugfix` / `verify`。默认 `off`。 |
+| `poteto-agent`、Comment Sicko、arena、swarm | 不生成。一个工单一个 owner。共享写入按步骤串行。 |
+| 角色模型 Opus / Fable / Gemini，`/setup-pstack` | 不读取。设计 codex、执行 pi、验证 codex，能力不够就 `blocked`。 |
+| bugbot、automations、worktree、`/loop`、control-cli | 不接。 |
+| 独立验收和同一复现面 | harness 证据要有 head、命令、输出和验收身份。实现派工的 id 不能充当验收身份。 |
+
+dsh-superagent 仍然只提供 Source → Trigger → Eval → Mandate / Ticket → Assignment 的边界。pstack 不取代那条边界，也不成为第二个会和人说话的入口。
+
 ## 严验对照（仍不可声称完成）
 
 | 检查 | 参考里的落点 | 这里的做法 | 还不能声称 |

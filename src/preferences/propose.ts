@@ -2,12 +2,15 @@ import { stableId } from '../core/ids.js'
 import type { Preference, PreferencePatch, Proposal } from '../core/model.js'
 import { COST } from '../core/model.js'
 import { UserError } from '../core/errors.js'
+import { workflowPolicy } from '../workflow/protocol.js'
 
 export function applyPatch(current: Preference, patch: PreferencePatch, at: string, note: string): Preference {
+  const { workflow: workflowPatch, ...rest } = patch
   return {
     ...current,
-    ...patch,
+    ...rest,
     weights: patch.weights ?? current.weights,
+    workflow: workflowPatch ? { ...workflowPolicy(current), ...workflowPatch } : workflowPolicy(current),
     version: current.version + 1,
     at,
     note,
@@ -44,13 +47,23 @@ export function buildProposal(current: Preference, changes: PreferencePatch, at:
       patch: { executeSubstitutes: changes.executeSubstitutes },
     })
   }
+  if (changes.workflow?.defaultKind && changes.workflow.defaultKind !== 'off') {
+    options.push({
+      id: 'workflow-off',
+      title: '流程保持关闭',
+      impact: '默认仍按原来的阶段列表派工。代理偏好不动。',
+      patch: {},
+    })
+  }
   options.push({
     id: 'keep',
     title: '先不改',
     impact: '继续用当前版本，不写新配置。',
     patch: {},
   })
-  const recommendation = changes.executeSubstitutes?.length
+  const recommendation = changes.workflow?.defaultKind && changes.workflow.defaultKind !== 'off'
+    ? `建议把新工单的默认流程设为 ${changes.workflow.defaultKind}。这不改变设计 codex、执行 pi、验证 codex，也不取消已经在跑的工单。${impact}`
+    : changes.executeSubstitutes?.length
     ? `pi 在 gbb 0.3.3 上不能新开。若你确认替代，之后的执行阶段会标明 user-approved-substitute，而不会悄悄换成 codex。${impact}`
     : `建议先看影响再确认。${impact}`
   return {
@@ -89,6 +102,12 @@ function describePatch(current: Preference, changes: PreferencePatch): string {
     parts.push(`未知额度策略 ${current.unknownQuota} → ${changes.unknownQuota}`)
   }
   if (changes.authorizedKinds) parts.push(`授权候选改为 ${changes.authorizedKinds.join('、')}`)
+  if (changes.workflow?.defaultKind && changes.workflow.defaultKind !== workflowPolicy(current).defaultKind) {
+    parts.push(`默认流程 ${workflowPolicy(current).defaultKind} → ${changes.workflow.defaultKind}`)
+  }
+  if (changes.workflow?.maxReworkRounds !== undefined && changes.workflow.maxReworkRounds !== workflowPolicy(current).maxReworkRounds) {
+    parts.push(`验收失败后的返工上限 ${workflowPolicy(current).maxReworkRounds} → ${changes.workflow.maxReworkRounds}`)
+  }
   if (parts.length === 0) parts.push('没有字段变化')
   return parts.join('。') + '。本地预算不是供应商账单。额度未知时不会编造剩余。'
 }

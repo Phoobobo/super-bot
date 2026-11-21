@@ -105,8 +105,9 @@ export class Runtime {
     producer: 'harness' | 'agent',
     checks: { id: string; ok: boolean; detail?: string }[],
     actor = 'grok-bot',
+    fact: { head?: string; command?: string; output?: string; verifier?: string } = {},
   ): Promise<ReturnType<Engine['evidence']>> {
-    const result = this.engine.evidence(assignmentId, producer, checks, actor)
+    const result = this.engine.evidence(assignmentId, producer, checks, actor, fact)
     if (this.autoDrain) await this.drain()
     return result
   }
@@ -277,5 +278,13 @@ function validatePatch(changes: PreferencePatch): void {
   }
   if (changes.executeSubstitutes?.includes('pi')) {
     throw new UserError('bad-substitute', 'pi 是执行首选，不能再写成它的替代')
+  }
+  const kind = changes.workflow?.defaultKind
+  if (kind && kind !== 'off' && kind !== 'feature' && kind !== 'bugfix' && kind !== 'verify') {
+    throw new UserError('bad-workflow', '流程只能是 off、feature、bugfix、verify')
+  }
+  const rounds = changes.workflow?.maxReworkRounds
+  if (rounds !== undefined && (!Number.isInteger(rounds) || rounds < 0 || rounds > 5)) {
+    throw new UserError('bad-rework', '返工上限要是 0 到 5 的整数')
   }
 }

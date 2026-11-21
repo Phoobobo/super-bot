@@ -7,6 +7,7 @@ Grok Bot 用这份说明调用 super-bot。人只和你说话。你不要开第�
 - 人要新开一件事：设计偏 codex，验证偏 codex，执行偏 pi。
 - 人要接着某个已经在 Herdr Core 里的会话做，而且能提供完整快照，不是只丢一个 pane id。
 - 人要改强度、本地预算或「pi 不可用时的替代」。先给建议，等人点头再确认。
+- 人要可选的 pstack 流程时，先说明默认是 `off`。可选的只有 `feature`、`bugfix`、`verify`。确认后再写入偏好。这不改变代理人选，也不取消已经在跑的工单。
 
 ## 不要做
 
@@ -25,6 +26,8 @@ Grok Bot 用这份说明调用 super-bot。人只和你说话。你不要开第�
 ```bash
 sbot request --request-id <id> --text "<人的原话>" --scope "<范围>" --acceptance tests
 ```
+
+要走 pstack 流程时加上 `--workflow feature|bugfix|verify`。`verify` 还要 `--head <sha>`。证据要带 `--head`、`--command`、`--output`，验收步骤再加 `--verifier <验收派工 id>`。
 
 看工单：`sbot show --ticket <id>`。把 `summary` / `attention` 用你自己的话告诉人。然后 `sbot inbox ack --id <message-id>`。
 

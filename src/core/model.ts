@@ -5,6 +5,29 @@ export type AgentKind = 'codex' | 'pi' | 'antigravity' | 'grok'
 
 export type Role = 'design' | 'verify' | 'execute'
 
+/** Optional pstack protocol. Agent weights are a different preference. */
+export type WorkflowKind = 'feature' | 'bugfix' | 'verify'
+
+export interface WorkflowPolicy {
+  /** off keeps the phase list. feature, bugfix, and verify are opt-in. */
+  defaultKind: 'off' | WorkflowKind
+  /** Extra fix attempts after an independent verify fails. Finite. */
+  maxReworkRounds: number
+}
+
+export interface WorkflowBinding {
+  kind: WorkflowKind
+  source: 'request' | 'preference'
+  policyVersion: number
+  maxReworkRounds: number
+  reworkRounds: number
+  acceptance: string[]
+  kickoffHead?: string
+  acceptedHead?: string
+  reproCommand?: string
+  reproOutput?: string
+}
+
 export type Intensity = 'low' | 'normal' | 'high'
 
 export const COST: Record<Intensity, number> = { low: 1, normal: 2, high: 4 }
@@ -38,6 +61,7 @@ export interface Preference {
   unknownQuota: 'mark-and-proceed' | 'block'
   acceptMode: 'explicit-only'
   allowedActors: string[]
+  workflow: WorkflowPolicy
   at: string
   note: string
 }
@@ -64,6 +88,8 @@ export interface Trigger {
   simulated: boolean
   /** A person's follow-up on a thread that already has a ticket. It grants no new mandate. */
   followUp: boolean
+  workflow?: WorkflowKind
+  head?: string
 }
 
 export interface Thread {
@@ -138,6 +164,8 @@ export interface Ticket {
   createdAt: string
   /** Takeover only. A pasted snapshot does not set this to registered. */
   handover?: 'pending' | 'planned' | 'registered' | 'unknown'
+  /** Frozen at accept. A later preference edit does not rewrite it or cancel the ticket. */
+  workflow?: WorkflowBinding
   /** Takeover only. send waits until gbb read returns text. */
   contextRead?: 'pending' | 'planned' | 'read' | 'empty' | 'unknown'
   observedContext?: { source: 'gbb-read'; text: string; at: string }
@@ -180,6 +208,11 @@ export interface Assignment {
   role: Role
   seq: number
   itemKey?: string
+  stepId?: string
+  writes?: boolean
+  readOnly?: boolean
+  /** Head this step is allowed to accept. A different head is stale. */
+  boundHead?: string
   title: string
   status: AssignmentStatus
   plan?: PlanRecord
@@ -207,6 +240,11 @@ export interface Evidence {
   at: string
   sufficient: boolean
   reason: string
+  head?: string
+  command?: string
+  output?: string
+  /** Acceptance identity. The implementer assignment id is rejected on a verify step. */
+  verifier?: string
 }
 
 export interface BotMessage {
@@ -255,6 +293,7 @@ export interface PreferencePatch {
   weights?: Record<Role, Weight[]>
   sampleSeed?: string
   unknownQuota?: Preference['unknownQuota']
+  workflow?: Partial<WorkflowPolicy>
 }
 
 export interface Proposal {

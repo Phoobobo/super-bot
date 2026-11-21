@@ -20,9 +20,11 @@ import type {
   Thread,
   Ticket,
   Trigger,
+  WorkflowKind,
 } from './model.js'
 import { planAssignment } from './plan.js'
 import type { Store } from '../store.js'
+import { judgeWorkflowEvidence, workflowBrief, workflowPolicy, workflowSteps, type WorkflowStep } from '../workflow/protocol.js'
 
 export interface RequestInput {
   actor: string
@@ -36,6 +38,10 @@ export interface RequestInput {
   repo: string
   threadKey?: string
   simulated: boolean
+  /** Set on this request. Otherwise the preference default applies. off is not stored. */
+  workflow?: WorkflowKind
+  /** Required for the verify workflow. The head under acceptance. */
+  head?: string
 }
 
 export interface EnginePorts {
@@ -101,6 +107,8 @@ export class Engine {
         channel: input.channel,
         simulated: input.simulated,
         followUp: Boolean(thread.subscription),
+        workflow: input.workflow,
+        head: input.head,
       }
       this.store.put('trigger', trigger.id, trigger)
       thread.triggerIds.push(trigger.id)
@@ -142,6 +150,8 @@ export class Engine {
           channel: trigger.channel,
           repo: trigger.repo,
           simulated: trigger.simulated,
+          workflow: trigger.workflow,
+          head: trigger.head,
         }
         const result = this.evaluate(thread, trigger, input)
         if (result.ticketId) opened.push(result.ticketId)
@@ -299,19 +309,24 @@ export class Engine {
     producer: 'harness' | 'agent',
     checks: { id: string; ok: boolean; detail?: string }[],
     actor: string,
+    fact: { head?: string; command?: string; output?: string; verifier?: string } = {},
   ): Evidence {
     return this.write(() => {
       const assignment = this.assignment(assignmentId)
       const mandate = this.mandate(this.ticket(assignment.ticketId).mandateId)
       if (actor !== mandate.actor) throw new UserError('actor-not-allowed', '证据提交者不是这条授权的身份')
       const evidence: Evidence = {
-        id: stableId('evd', [assignmentId, producer, this.iso(), checks.map((check) => check.id).join(',')]),
+        id: stableId('evd', [assignmentId, producer, this.iso(), checks.map((check) => check.id).join(','), fact.head ?? '', fact.command ?? '']),
         assignmentId,
         producer,
         checks,
         at: this.iso(),
         sufficient: false,
         reason: 'stored',
+        head: fact.head,
+        command: fact.command,
+        output: fact.output,
+        verifier: fact.verifier,
       }
       assignment.evidenceIds.push(evidence.id)
       this.store.put('evidence', evidence.id, evidence)
@@ -609,7 +624,18 @@ export class Engine {
       createdAt: this.iso(),
     }
     this.store.put('mandate', mandate.id, mandate)
-    input.phases.forEach((role, seq) => {
+    const selected = this.resolveWorkflow(input, policyVersion)
+    if (selected) {
+      ticket.workflow = selected.binding
+      selected.steps.forEach((step, seq) => {
+        const assignment = this.blankAssignment(ticket, step.role, seq, step.title, step.id)
+        assignment.stepId = step.id
+        assignment.writes = step.writes
+        assignment.readOnly = step.readOnly
+        ticket.assignmentIds.push(assignment.id)
+        this.store.put('assignment', assignment.id, assignment)
+      })
+    } else input.phases.forEach((role, seq) => {
       const assignment = this.blankAssignment(ticket, role, seq, roleTitle(role))
       ticket.assignmentIds.push(assignment.id)
       this.store.put('assignment', assignment.id, assignment)
@@ -646,7 +672,43 @@ export class Engine {
     this.store.put('ticket', ticket.id, ticket)
   }
 
+  private resolveWorkflow(input: RequestInput, policyVersion: number): { binding: NonNullable<Ticket['workflow']>; steps: WorkflowStep[] } | undefined {
+    const preference = this.preference()
+    const policy = workflowPolicy(preference)
+    const kind = input.workflow ?? (policy.defaultKind === 'off' ? undefined : policy.defaultKind)
+    if (!kind) return undefined
+    if (kind === 'verify' && !input.head) throw new UserError('head-required', '只读验收要给出当前 head')
+    return {
+      binding: {
+        kind,
+        source: input.workflow ? 'request' : 'preference',
+        policyVersion,
+        maxReworkRounds: policy.maxReworkRounds,
+        reworkRounds: 0,
+        acceptance: [...input.acceptance],
+        kickoffHead: input.head,
+        acceptedHead: kind === 'verify' ? input.head : undefined,
+      },
+      steps: workflowSteps(kind),
+    }
+  }
+
   private activate(ticket: Ticket, assignment: Assignment): void {
+    if (assignment.writes) {
+      const busy = this.assignmentsOf(ticket).some((item) => item.id !== assignment.id && item.writes && (item.status === 'pending' || item.status === 'running'))
+      if (busy) return
+    }
+    const workflow = ticket.workflow
+    if (workflow && assignment.stepId === 'verify') {
+      if (!workflow.acceptedHead) {
+        assignment.status = 'blocked'
+        assignment.transport = 'none'
+        assignment.block = { code: 'head-missing', detail: '还没有实现步骤记下的 head，不能开始独立验收' }
+        this.store.put('assignment', assignment.id, assignment)
+        return
+      }
+      assignment.boundHead = workflow.acceptedHead
+    }
     const preference = this.preference()
     const ledger = this.store.ledger()
     const available = preference.budget - ledger.spent - ledger.reserved
@@ -942,6 +1004,10 @@ export class Engine {
       }
       return
     }
+    if (ticket.workflow && assignment.stepId) {
+      this.considerWorkflow(ticket, assignment, just, claimOk)
+      return
+    }
     if (!claimOk || !covered || failed) {
       if (just && just.producer === 'harness') {
         just.sufficient = false
@@ -970,6 +1036,118 @@ export class Engine {
     }
     assignment.status = 'accepted'
     this.store.put('assignment', assignment.id, assignment)
+    this.releaseNext(ticket)
+  }
+
+  private considerWorkflow(ticket: Ticket, assignment: Assignment, just: Evidence | undefined, claimOk: boolean): void {
+    const workflow = ticket.workflow
+    if (!workflow || !assignment.stepId) return
+    if (just?.producer === 'agent') {
+      just.sufficient = false
+      just.reason = 'agent-self-report'
+      this.store.put('evidence', just.id, just)
+    }
+    const fact = assignment.evidenceIds
+      .map((id) => this.store.get<Evidence>('evidence', id))
+      .filter((item): item is Evidence => item?.producer === 'harness')
+      .at(-1)
+    if (!fact) return
+    const judgment = judgeWorkflowEvidence({
+      kind: workflow.kind,
+      stepId: assignment.stepId,
+      producer: 'harness',
+      claimOk,
+      checks: fact.checks,
+      acceptance: workflow.acceptance,
+      head: fact.head,
+      command: fact.command,
+      output: fact.output,
+      verifier: fact.verifier,
+      boundHead: assignment.boundHead,
+      reproCommand: workflow.reproCommand,
+      reproOutput: workflow.reproOutput,
+      implementerIds: this.implementerIds(ticket),
+    })
+    fact.sufficient = judgment.sufficient
+    fact.reason = judgment.reason
+    this.store.put('evidence', fact.id, fact)
+    if (!judgment.sufficient) {
+      if (!judgment.block || !claimOk) return
+      if (judgment.rework) {
+        this.reworkOrBlock(ticket, assignment, judgment.block)
+        return
+      }
+      assignment.status = 'blocked'
+      assignment.block = judgment.block
+      this.store.put('assignment', assignment.id, assignment)
+      this.notify(
+        'attention',
+        ticket.channel,
+        ticket.id,
+        `步骤 ${assignment.stepId} 停住：${judgment.block.detail}`,
+        { assignmentId: assignment.id, block: judgment.block },
+        ['workflow-blocked', assignment.id, judgment.block.code],
+      )
+      return
+    }
+    if (judgment.recordHead) workflow.acceptedHead = judgment.recordHead
+    if (judgment.recordRepro) {
+      workflow.reproCommand = judgment.recordRepro.command
+      workflow.reproOutput = judgment.recordRepro.output
+    }
+    ticket.workflow = workflow
+    this.store.put('ticket', ticket.id, ticket)
+    assignment.status = 'accepted'
+    this.store.put('assignment', assignment.id, assignment)
+    this.releaseNext(ticket)
+  }
+
+  private implementerIds(ticket: Ticket): string[] {
+    return this.assignmentsOf(ticket).flatMap((item) => (item.writes ? [item.id, item.gbbTaskId ?? ''] : [])).filter(Boolean)
+  }
+
+  private reworkOrBlock(ticket: Ticket, verify: Assignment, block: { code: string; detail: string }): void {
+    const workflow = ticket.workflow
+    if (!workflow) return
+    workflow.reworkRounds += 1
+    if (workflow.reworkRounds > workflow.maxReworkRounds) {
+      verify.status = 'blocked'
+      verify.block = { code: 'rework-limit', detail: `返工已到上限 ${workflow.maxReworkRounds}。${block.detail}` }
+      ticket.workflow = workflow
+      this.store.put('ticket', ticket.id, ticket)
+      this.store.put('assignment', verify.id, verify)
+      this.notify(
+        'attention',
+        ticket.channel,
+        ticket.id,
+        verify.block.detail,
+        { assignmentId: verify.id, reworkRounds: workflow.reworkRounds },
+        ['rework-limit', verify.id],
+      )
+      return
+    }
+    const step = workflowSteps(workflow.kind).find((item) => item.writes)
+    if (!step) {
+      verify.status = 'blocked'
+      verify.block = block
+      this.store.put('assignment', verify.id, verify)
+      return
+    }
+    const rework = this.blankAssignment(ticket, step.role, verify.seq, `返工 ${workflow.reworkRounds}：${step.title}`, `rework-${workflow.reworkRounds}`)
+    rework.stepId = step.id
+    rework.writes = true
+    rework.readOnly = false
+    verify.seq += 1
+    verify.status = 'held'
+    verify.claim = undefined
+    verify.evidenceIds = []
+    verify.block = undefined
+    verify.boundHead = undefined
+    ticket.assignmentIds.push(rework.id)
+    ticket.workflow = workflow
+    this.store.put('assignment', rework.id, rework)
+    this.store.put('assignment', verify.id, verify)
+    this.store.put('ticket', ticket.id, ticket)
     this.releaseNext(ticket)
   }
 
@@ -1045,6 +1223,20 @@ export class Engine {
   }
 
   private promptFor(ticket: Ticket, assignment: Assignment): string {
+    if (ticket.workflow && assignment.stepId) {
+      const step = workflowSteps(ticket.workflow.kind).find((item) => item.id === assignment.stepId)
+      if (step) {
+        return workflowBrief({
+          kind: ticket.workflow.kind,
+          step,
+          owner: ticket.owner,
+          scope: ticket.scope,
+          acceptance: ticket.workflow.acceptance,
+          boundHead: assignment.boundHead ?? ticket.workflow.acceptedHead,
+          reproCommand: ticket.workflow.reproCommand,
+        })
+      }
+    }
     const required = this.requiredChecks(ticket, assignment)
     return [
       `工单 ${ticket.id}，角色 ${assignment.role}。`,
@@ -1155,7 +1347,7 @@ export class Engine {
     const version = this.store.meta<number>('preference-current') ?? 1
     const preference = this.store.get<import('./model.js').Preference>('preference', String(version))
     if (!preference) throw new UserError('no-preference', '没有当前偏好')
-    return preference
+    return { ...preference, workflow: workflowPolicy(preference) }
   }
 
   private ticket(id: string): Ticket {

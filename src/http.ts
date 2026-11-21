@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { Runtime } from './runtime.js'
 import { UserError } from './core/errors.js'
-import type { PreferencePatch, Role } from './core/model.js'
+import type { PreferencePatch, Role, WorkflowKind } from './core/model.js'
+import { isWorkflowKind } from './workflow/protocol.js'
 import { parseSnapshot } from './takeover/snapshot.js'
 
 export async function startHttp(runtime: Runtime, port: number): Promise<{ port: number; url: string; close: () => Promise<void> }> {
@@ -62,6 +63,8 @@ async function route(
       requestId: String(body.requestId ?? ''),
       channel: String(body.channel ?? 'grok-bot'),
       repo: String(body.repo ?? '/work/example-repo'),
+      workflow: workflowOf(body.workflow),
+      head: typeof body.head === 'string' ? body.head : undefined,
     })
     return { status: 200, body: result.ticketId ? { ...result, ticket: runtime.view(result.ticketId) } : result }
   }
@@ -78,6 +81,12 @@ async function route(
       body.producer === 'agent' ? 'agent' : 'harness',
       (body.checks as { id: string; ok: boolean }[]) ?? [],
       actor,
+      {
+        head: typeof body.head === 'string' ? body.head : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+        output: typeof body.output === 'string' ? body.output : undefined,
+        verifier: typeof body.verifier === 'string' ? body.verifier : undefined,
+      },
     )
     return { status: 200, body: evidence }
   }
@@ -109,6 +118,12 @@ async function route(
 function actorFrom(req: IncomingMessage): string {
   const header = req.headers['x-superbot-actor']
   return typeof header === 'string' && header ? header : 'grok-bot'
+}
+
+function workflowOf(value: unknown): WorkflowKind | undefined {
+  if (value === undefined || value === 'off') return undefined
+  if (typeof value === 'string' && isWorkflowKind(value)) return value
+  throw new UserError('bad-workflow', 'workflow 只能是 feature、bugfix、verify')
 }
 
 function phasesOf(value: unknown): Role[] {

@@ -4,7 +4,8 @@ import path from 'node:path'
 import { runDemos } from './demo.js'
 import { startHttp } from './http.js'
 import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED } from './gbb/contract.js'
-import type { AgentKind, Intensity, PreferencePatch, Role } from './core/model.js'
+import type { AgentKind, Intensity, PreferencePatch, Role, WorkflowKind } from './core/model.js'
+import { isWorkflowKind } from './workflow/protocol.js'
 import { Runtime } from './runtime.js'
 import { parseSnapshot } from './takeover/snapshot.js'
 import type { GbbEvent } from './core/model.js'
@@ -14,13 +15,15 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot demo                         跑三条模拟场景（fake adapter，不是真实 gbb）
   sbot capabilities                 打印当前采用的 gbb 能力资料
   sbot request --request-id ID --text TEXT --scope SCOPE --acceptance tests
-                                    默认 real dry-run，不会启动代理
+                                    [--workflow feature|bugfix|verify] [--head SHA]
+                                    默认 real dry-run，不会启动代理。不写 --workflow 时沿用偏好，默认 off
   sbot request ... --simulate       用模拟的 launch-kind 契约和 fake adapter
   sbot takeover --snapshot FILE     导入接管快照。只有 pane id 会被拒绝
   sbot callback --json FILE         写入一条 gbb 回调
   sbot evidence --assignment ID --check role:execute=ok --producer harness
   sbot preference show
   sbot preference propose [--intensity low|normal|high] [--budget N] [--allow-substitute codex]
+                                    [--workflow off|feature|bugfix|verify] [--max-rework N]
   sbot preference confirm --proposal ID --option apply|safer|substitutes-only|keep
   sbot preference revert --version N
   sbot pause | sbot resume
@@ -95,6 +98,8 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
         phases: (flagValue(rest, '--phases') ?? 'design,execute,verify').split(',') as Role[],
         channel: 'grok-bot',
         repo: flagValue(rest, '--repo') ?? '/work/example-repo',
+        workflow: workflowFlag(flagValue(rest, '--workflow')),
+        head: flagValue(rest, '--head'),
       }).then((result) => (result.ticketId ? { ...result, ticket: runtime.view(result.ticketId) } : result))
     case 'takeover':
       return runtime.takeover(parseSnapshot(JSON.parse(fs.readFileSync(required(rest, '--snapshot'), 'utf8')))).then((result) => ({
@@ -112,6 +117,13 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
           const [id, mark] = item.split('=')
           return { id: id ?? item, ok: mark !== 'fail' }
         }),
+        'grok-bot',
+        {
+          head: flagValue(rest, '--head'),
+          command: flagValue(rest, '--command'),
+          output: flagValue(rest, '--output'),
+          verifier: flagValue(rest, '--verifier'),
+        },
       )
     }
     case 'preference':
@@ -146,6 +158,13 @@ function preference(runtime: Runtime, rest: string[]): unknown {
     if (substitute) patch.executeSubstitutes = [substitute as AgentKind]
     const quota = flagValue(rest, '--unknown-quota')
     if (quota === 'block' || quota === 'mark-and-proceed') patch.unknownQuota = quota
+    const workflow = flagValue(rest, '--workflow')
+    const rounds = flagValue(rest, '--max-rework')
+    if (workflow || rounds) {
+      patch.workflow = {}
+      if (workflow === 'off' || isWorkflowKind(workflow)) patch.workflow.defaultKind = workflow
+      if (rounds) patch.workflow.maxReworkRounds = Number(rounds)
+    }
     return runtime.propose(patch)
   }
   if (sub === 'confirm') return runtime.confirm(required(rest, '--proposal'), required(rest, '--option'))
@@ -174,6 +193,12 @@ function smoke(): number {
   ]
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0
+}
+
+function workflowFlag(value: string | undefined): WorkflowKind | undefined {
+  if (!value) return undefined
+  if (!isWorkflowKind(value)) throw new Error('workflow 只能是 feature、bugfix、verify')
+  return value
 }
 
 function flag(argv: string[], name: string): boolean {

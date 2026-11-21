@@ -9,7 +9,7 @@ dry-run 只生成 gbb 参数。它不注册 pane，不读取终端，不是 E2E�
 - vitest：6 个文件，27 个测试，全部通过。
 - `tsc -p tsconfig.json` 构建通过。
 
-`npx tsx src/cli.ts demo` 退出码 0。三个场景都是 ok。接管场景的原文写明快照还不是完成的接管，send 发生在模拟的 gbb handover 和 gbb read 之后。
+`npx tsx src/cli.ts demo` 退出码 0。新请求、接管、偏好三个场景都是 ok。接管场景的原文写明快照还不是完成的接管，send 发生在模拟的 gbb handover 和 gbb read 之后。后来的 demo 加了第四个 `workflow` 场景，仍然是 fake adapter。
 
 尚未完成：真实 Mac 上的 gbb 0.3.3 / hc 0.1.21 E2E，以及向用户 bot webhook 的推送。inbox 只是本机拉取契约。
 
@@ -25,3 +25,7 @@ vitest 3 线的 dist-tag 停在 3.2.7，仍依赖 `tinypool@^1.1.1`，没有兼�
 npm 10.9.9 在解析 vitest 4 的可选 peer 时会走到 `vitest@*`，再去取 `@vitest/browser-playwright@5.1.1`，然后在 arborist 的 `#loadPeerSet` 里崩溃（`edgesOut`）。普通 `npm install vitest@4.1.12` 因此失败了两次。生成锁文件改用一次 `npm install --save-dev vitest@4.1.12 vite@7.3.8 --legacy-peer-deps`。这个仓库不用 browser、UI、coverage 或 jsdom。
 
 锁文件生成后，同一工作区删除 `node_modules` 再跑 `npm ci`，退出码 0，安装 150 个包。随后 `npm audit --json` 退出码 0，critical/high/moderate/low 都是 0。`npm ls` 是 `vite@7.3.8`、`vitest@4.1.12`、`@vitest/mocker@4.1.12`，没有 tinypool。`npm run check` 退出码 0：eslint、两套 tsc、vitest 7 个文件 28 个测试、构建都通过。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。这仍不是真实 E2E。
+
+## pstack 流程
+
+加入可选 feature / bugfix / verify 之后，再次删除 `node_modules` 跑 `npm ci`，退出码 0。`npm audit --json` 退出码 0，四级计数都是 0。`npm run check` 退出码 0：8 个文件、33 个测试通过。`npm run demo` 退出码 0，四个场景都是 ok，`realE2E` 仍是 false。`workflow` 场景写明 fake adapter，没有接 Cursor 子代理、arena 或 automations。

@@ -15,7 +15,12 @@ export interface DemoReport {
 /** Three local scenarios on the fake adapter. Nothing here talks to a gbb on a user machine. */
 export async function runDemos(root?: string): Promise<DemoReport> {
   const dir = root ?? fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-demo-'))
-  const scenarios = [await newRequest(path.join(dir, 'new')), await takeover(path.join(dir, 'takeover')), await preference(path.join(dir, 'preference'))]
+  const scenarios = [
+    await newRequest(path.join(dir, 'new')),
+    await takeover(path.join(dir, 'takeover')),
+    await preference(path.join(dir, 'preference')),
+    await workflowFeature(path.join(dir, 'workflow')),
+  ]
   return { simulated: true, realE2E: false, scenarios }
 }
 
@@ -123,6 +128,60 @@ async function preference(dir: string): Promise<DemoReport['scenarios'][number]>
     const third = reverted.ticketId ? runtime.view(reverted.ticketId).assignments[0] : undefined
     if (third?.block?.code !== 'capability') return fail('preference', '撤回后仍在使用替代')
     return { name: 'preference', ok: true, detail: proposal.recommendation }
+  } finally {
+    runtime.close()
+  }
+}
+
+async function workflowFeature(dir: string): Promise<DemoReport['scenarios'][number]> {
+  const runtime = new Runtime({ dir, adapter: 'fake', profile: GBB_LAUNCH_KIND_V1_SIMULATED })
+  try {
+    const created = await runtime.request({
+      actor: 'grok-bot',
+      text: '按 pstack feature 走一遍只读设计、实现和独立验收',
+      scope: '只改示例仓库里的健康检查',
+      acceptance: ['tests'],
+      acceptancePath: 'bot 提交带 head 的 harness 证据',
+      phases: ['design', 'execute', 'verify'],
+      requestId: 'demo-workflow-1',
+      channel: 'grok-bot',
+      repo: '/work/example-repo',
+      workflow: 'feature',
+    })
+    if (!created.ticketId) return fail('workflow', '没有工单')
+    const steps = [
+      { id: 'trace', head: 'aaa111', command: 'npm test', output: 'design notes' },
+      { id: 'implement', head: 'bbb222', command: 'npm test', output: 'patch applied' },
+      { id: 'verify', head: 'bbb222', command: 'npm test', output: '1 passed' },
+    ]
+    for (const step of steps) {
+      const view = runtime.view(created.ticketId)
+      const assignment = view.assignments.find((item) => item.stepId === step.id)
+      if (!assignment) return fail('workflow', `缺少 ${step.id}`)
+      if (assignment.status !== 'running') return fail('workflow', `${step.id} 状态是 ${assignment.status}`)
+      if (view.assignments.filter((item) => item.writes && item.status === 'running').length > 1) {
+        return fail('workflow', '同时有两个写入步骤')
+      }
+      await runtime.callback(doneEvent(assignment.gbbTaskId ?? '', `demo-${step.id}`))
+      const checks = step.id === 'verify' ? [{ id: 'tests', ok: true }] : []
+      const verifier = step.id === 'verify' ? assignment.id : undefined
+      await runtime.evidence(assignment.id, 'harness', checks, 'grok-bot', {
+        head: step.head,
+        command: step.command,
+        output: step.output,
+        verifier,
+      })
+    }
+    const view = runtime.view(created.ticketId)
+    const kinds = view.assignments.map((item) => `${item.stepId}:${item.plan?.kind}`).join(',')
+    if (view.ticket.phase !== 'ended') return fail('workflow', '工单没有结束')
+    if (kinds !== 'trace:codex,implement:pi,verify:codex') return fail('workflow', `分工是 ${kinds}`)
+    if (view.ticket.workflow?.acceptedHead !== 'bbb222') return fail('workflow', '验收 head 没有钉在实现步骤')
+    return {
+      name: 'workflow',
+      ok: true,
+      detail: 'feature 走了 trace→implement→verify。fake adapter，realE2E false。pstack 的 Cursor 子代理、arena 和 automations 没有接进来。',
+    }
   } finally {
     runtime.close()
   }

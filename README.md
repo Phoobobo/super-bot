@@ -8,7 +8,7 @@ Grok Bot 仍然是唯一和人说话的入口。super-bot 不另做聊天壳，�
 
 ## 现在能跑
 
-- `sbot demo`：三条模拟场景。fake adapter 走完「新请求 → 授权/工单 → 分工 → 回调 → harness 证据 → 回给 bot」，「接管已有会话且不重复已完成项」，以及「改派工偏好 → 看建议 → 确认 → 撤回」。输出里 `simulated: true`、`realE2E: false`。
+- `sbot demo`：四条模拟场景。fake adapter 走完「新请求 → 授权/工单 → 分工 → 回调 → harness 证据 → 回给 bot」，「接管已有会话且不重复已完成项」，「改派工偏好 → 看建议 → 确认 → 撤回」，以及可选的 pstack `feature` 流程。输出里 `simulated: true`、`realE2E: false`。
 - `sbot request` 默认是 **real dry-run**：只生成 `gbb` 的参数数组，不 spawn。
 - `sbot serve`：本机 JSON API，给 bot 和 gbb 回调用。
 - 状态、outbox、效果队列在 SQLite 里。进程重启后，正在飞的非幂等调用记为未知，不会自动重发。
@@ -56,6 +56,20 @@ npx sbot request --request-id demo-1 --text "给示例仓库补健康检查" --s
 ```
 
 执行阶段会停住，原因是 pi 不能 launch。设计阶段如果单独指定 `--phases design`，会得到一组 `gbb launch ... --kind codex` 参数，进程并不启动。
+
+## 可选的 pstack 流程
+
+默认 `workflow.defaultKind` 是 `off`，请求仍按 `design,execute,verify` 阶段走。确认偏好或在单次请求里写 `--workflow feature|bugfix|verify` 之后，Engine 才使用这三类步骤。流程偏好和代理偏好是两件事：设计仍默认 codex，执行仍默认 pi，验证仍默认 codex。pi 不能 launch 时停成 `capability`，不会悄悄改成 codex。
+
+| 流程 | 步骤 | 写入 |
+| --- | --- | --- |
+| feature | 追踪/设计 → 实现 → 独立验收 | 只有实现步骤写仓库，工单只有一个 owner |
+| bugfix | 先复现 → 最小修复 → 用同一条复现命令验收 | 修复步骤才写 |
+| verify | 只读验收一个已给出的 head | 不产生执行派工，不接管实现 diff |
+
+验收要带上 head、命令、实际输出，以及和实现派工不同的验收身份。旧 head 上的通过不能拿来给新 head 放行。kickoff 里的验收项不会在中途被加长。返工上限写在偏好里，默认 2，最多 5。改偏好不会取消已经在跑的工单，也不会放宽它的授权。
+
+这不是 Cursor 里的 `/poteto-mode`。没有接 slash skill、custom mode、`poteto-agent` / Comment Sicko、arena、swarm、automations、bugbot、worktree 或 `/loop`。模型也不使用 pstack 默认的 Opus / Fable / Gemini 面板。gbb 仍是唯一的 agent 通信层。
 
 ## 模拟和真实 E2E
 

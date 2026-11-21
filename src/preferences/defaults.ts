@@ -29,6 +29,7 @@ export function initialPreference(at: string): Preference {
     unknownQuota: 'mark-and-proceed',
     acceptMode: 'explicit-only',
     allowedActors: ['grok-bot'],
+    workflow: { defaultKind: 'off', maxReworkRounds: 2 },
     at,
     note: '初始偏好。额度通道未配置，未知额度只标记并允许首选角色。',
   }
