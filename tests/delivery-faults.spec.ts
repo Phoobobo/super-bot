@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { postBotMessage } from '../src/delivery.js'
+import { doneEvent } from './bac-event.js'
 import { baseRequest, openRuntime } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
 
@@ -91,14 +92,8 @@ describe('outbox faults', () => {
     const created = await baseRequest(runtime, 'owner-deliver', { phases: ['design'] })
     const before = ids.length
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
-    const rejected = await runtime.callback({
-      event: 'agent_status',
-      task_id: assignment?.gbbTaskId,
-      status: 'done',
-      ts: '2026-01-01T00:00:09.000Z',
-      owner: 'other-bot',
-    })
-    expect(rejected.rejected).toBe('owner-mismatch')
+    const rejected = await runtime.callback({ ...doneEvent(assignment?.gbbTaskId, 'owner-deliver'), owner: 'other-bot' })
+    expect(rejected.rejected).toBe('owner_mismatch')
     expect(ids).toHaveLength(before)
   })
 })

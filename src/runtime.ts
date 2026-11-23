@@ -3,10 +3,10 @@ import { Engine, type RequestInput } from './core/engine.js'
 import { UserError } from './core/errors.js'
 import type { BotMessage, EffectRow, Intensity, Preference, PreferencePatch, Proposal } from './core/model.js'
 import { AGENT_KINDS } from './core/model.js'
-import type { AdapterResult, GbbAdapter } from './gbb/adapter.js'
-import { FakeGbb, type FakeScript } from './gbb/fake.js'
-import { RealGbb } from './gbb/real.js'
-import { GBB_033, type CapabilityProfile } from './gbb/contract.js'
+import type { AdapterResult, BacAdapter } from './bac/adapter.js'
+import { FakeBac, type FakeScript } from './bac/fake.js'
+import { RealBac } from './bac/real.js'
+import { BAC_V1, type CapabilityProfile } from './bac/contract.js'
 import { initialPreference } from './preferences/defaults.js'
 import { applyPatch, buildProposal, optionOf, roleRecommendation } from './preferences/propose.js'
 import { unconfiguredProvider, type QuotaProvider } from './quota.js'
@@ -41,14 +41,14 @@ export interface RuntimeOptions {
   clock?: Clock
   autoDrain?: boolean
   stuckAfterMs?: number
-  gbbBin?: string
-  spawn?: ConstructorParameters<typeof RealGbb>[0]['spawn']
+  bacBin?: string
+  spawn?: ConstructorParameters<typeof RealBac>[0]['spawn']
 }
 
 export class Runtime {
   readonly store: Store
   readonly engine: Engine
-  readonly adapter: GbbAdapter
+  readonly adapter: BacAdapter
   readonly clock: Clock
   readonly profile: CapabilityProfile
   private readonly autoDrain: boolean
@@ -60,7 +60,7 @@ export class Runtime {
 
   constructor(options: RuntimeOptions) {
     this.clock = options.clock ?? systemClock()
-    this.profile = options.profile ?? GBB_033
+    this.profile = options.profile ?? BAC_V1
     this.autoDrain = options.autoDrain !== false
     this.stuckAfterMs = options.stuckAfterMs ?? 15 * 60 * 1000
     this.bot = options.bot
@@ -71,9 +71,9 @@ export class Runtime {
     const kind = options.adapter ?? 'real'
     this.adapter =
       kind === 'fake'
-        ? new FakeGbb(this.profile, options.fakeScript)
-        : new RealGbb({
-            bin: options.gbbBin,
+        ? new FakeBac(this.profile, options.fakeScript)
+        : new RealBac({
+            bin: options.bacBin,
             mode: options.mode ?? 'dry-run',
             profile: this.profile,
             allowLive: options.allowLive,
@@ -84,7 +84,7 @@ export class Runtime {
       quota: options.quota ?? unconfiguredProvider,
       modelRaw: options.model,
       promptDir: path.join(options.dir, 'prompts'),
-      gbbBin: options.gbbBin ?? 'gbb',
+      gbbBin: options.bacBin ?? 'bac',
     })
     this.ensurePreference()
     this.recover()

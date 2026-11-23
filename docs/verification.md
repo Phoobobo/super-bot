@@ -44,4 +44,8 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 `npm run check` 退出码 0：13 个文件、52 个测试。`npm audit --json` 退出码 0，四级都是 0。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。fake adapter 仍会把派工走到 `running` 再收回调，汇总原文写明这是模拟路径。`SUPERBOT_MAC_E2E=1 node scripts/mac-e2e.mjs` 在重新构建 dist 之后退出码 0：`realE2E` false，派工 `planned`，`claim` null，`callbackRejected` `not-dispatched`，`evidenceDisposition` `simulation`，`claimStoredWhilePlanned` false，`summaryDelivered` false。这仍不是 Mac 上的真实执行。
 
+## bac v1 消费方
+
+契约冻结提交 `ae859908ed07684997c786d1744e5f724f087259`，父提交 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。super-bot 改的是 argv、回调和接管消费方。没有实现 `bac`，没有在本机安装或切换，也没有把 fixture 或脚本注入的回调写成端到端。`acceptance.json` 的 `ran` 仍是 false。迁移后 `npm run check` 退出码 0：14 个文件、57 个测试。`npm audit --json` 的 critical/high/moderate/low 都是 0。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。执行阶段的 pi 是 `kind_unsupported` / `rejected`，没有改写成 codex。
+
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

@@ -172,7 +172,7 @@ export interface Ticket {
   workflow?: WorkflowBinding
   /** Takeover only. send waits until gbb read returns text. */
   contextRead?: 'pending' | 'planned' | 'read' | 'empty' | 'unknown'
-  observedContext?: { source: 'gbb-read'; text: string; at: string }
+  observedContext?: { source: 'bac-read'; text: string; at: string }
 }
 
 export type AssignmentStatus =
@@ -191,7 +191,7 @@ export interface PlanRecord {
   role: Role
   outcome: 'ready' | 'blocked'
   kind?: AgentKind
-  block?: { code: string; requirement?: string; detail: string }
+  block?: { code: string; requirement?: string; detail: string; kind?: string; kindSupport?: 'rejected' | 'unknown' }
   model: ResolvedObservation<string>
   quota: ResolvedObservation<QuotaValue>
   sample: {
@@ -228,7 +228,7 @@ export interface Assignment {
   transport: 'launch' | 'send' | 'none'
   claim?: { status: string; eventKey: string; text?: string; at: string }
   evidenceIds: string[]
-  block?: { code: string; requirement?: string; detail: string }
+  block?: { code: string; requirement?: string; detail: string; kind?: string; kindSupport?: 'rejected' | 'unknown' }
   attention?: 'stuck'
   startedAt?: string
   stuckNotified?: boolean
@@ -320,10 +320,12 @@ export interface Proposal {
 }
 
 export interface GbbEvent {
-  source?: string
-  version?: string
+  source?: unknown
+  version?: unknown
   event: string
   event_id?: string
+  generation?: number
+  attempt?: number
   task_id?: string | null
   pane_id?: string | null
   status?: string | null
@@ -333,8 +335,7 @@ export interface GbbEvent {
   backend?: string
   agent_kind?: string | null
   blocked_reason?: string
-  /** Present only if a caller added it. gbb 0.3.3 does not send terminal text. */
-  claim?: string
+  fallback_reason?: string
 }
 
 export type ModelObservation = RawObservation<string>

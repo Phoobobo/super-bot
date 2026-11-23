@@ -1,7 +1,7 @@
 {
   "schema": "superbot.takeover.v1",
   "source": {
-    "adapter": "gbb",
+    "adapter": "bac",
     "command": "status",
     "observedAt": "2026-01-01T00:00:00.000Z"
   },
@@ -13,7 +13,7 @@
     "owner": "grok-bot",
     "kind": {
       "status": "known",
-      "value": "pi",
+      "value": "codex",
       "source": "operator-snapshot",
       "observedAt": "2026-01-01T00:00:00.000Z"
     },

@@ -1,8 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { CapabilityProfile } from '../gbb/contract.js'
-import { handoverArgs, launchArgs, readArgs, sendArgs, statusArgs, stopArgs } from '../gbb/argv.js'
-import type { AdapterResult } from '../gbb/adapter.js'
+import type { CapabilityProfile } from '../bac/contract.js'
+import { classifyLaunchKind } from '../bac/contract.js'
+import { handoverArgs, launchArgs, readArgs, sendArgs, statusArgs, stopArgs } from '../bac/argv.js'
+import type { AdapterResult } from '../bac/adapter.js'
+import { callbackDedupeKey, intakeCallback } from '../bac/callback.js'
+import { acceptPaneId } from '../bac/pane.js'
+
+export { callbackDedupeKey }
 import type { QuotaProvider } from '../quota.js'
 import { unknownObservation, type RawObservation } from '../observe.js'
 import type { TakeoverSnapshot } from '../takeover/snapshot.js'
@@ -172,7 +177,21 @@ export class Engine {
         throw new UserError('actor-not-allowed', '接管授权身份不在允许列表')
       }
       if (!preference.allowedActors.includes(snapshot.identity.owner)) {
-        throw new UserError('owner-not-allowed', 'gbb owner 不在允许列表')
+        throw new UserError('owner-not-allowed', 'bac owner 不在允许列表')
+      }
+      const pane = acceptPaneId(snapshot.identity.paneId)
+      if (!pane.ok) throw new UserError('pane_id', pane.reason)
+      const reported = snapshot.identity.kind.status === 'known' ? snapshot.identity.kind.value : undefined
+      if (reported) {
+        const classified = classifyLaunchKind(reported)
+        if (!classified.ok) {
+          throw new UserError(
+            classified.code,
+            classified.code === 'kind_unsupported'
+              ? `kind ${classified.kind} is not implemented`
+              : '--kind is required (codex or grok)',
+          )
+        }
       }
       const at = this.iso()
       const ticketId = stableId('tck', ['takeover', snapshot.identity.paneId, snapshot.source.observedAt])
@@ -261,42 +280,47 @@ export class Engine {
   }
 
   callback(event: GbbEvent): { duplicate: boolean; matched: boolean; assignmentId?: string; rejected?: string } {
-    const key = callbackDedupeKey(event)
+    const intake = intakeCallback(event)
+    if (!intake.ok) return { duplicate: false, matched: false, rejected: intake.rejected }
+    const accepted = intake.event
+    const key = callbackDedupeKey(accepted)
     return this.write(() => {
       if (this.store.seenCallback(key)) return { duplicate: true, matched: true }
-      const assignment = event.task_id ? this.assignmentByTask(event.task_id) : undefined
+      const assignment = accepted.task_id ? this.assignmentByTask(accepted.task_id) : undefined
       if (!assignment) {
         this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso() })
         return { duplicate: false, matched: false }
       }
       const ticket = this.ticket(assignment.ticketId)
-      if (!event.owner || event.owner !== ticket.owner) {
-        this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
+      if (!accepted.owner || accepted.owner !== ticket.owner) {
         return {
           duplicate: false,
           matched: false,
-          rejected: event.owner ? 'owner-mismatch' : 'owner-missing',
+          rejected: accepted.owner ? 'owner_mismatch' : 'owner_required',
           assignmentId: assignment.id,
         }
       }
-      const status = event.status ?? ''
-      const completion = status === 'done' || status === 'idle' || status === 'blocked' || status === 'error'
+      const status = accepted.status ?? ''
+      const completion = status === 'done' || status === 'idle' || status === 'blocked'
+      if (accepted.event === 'agent_status' && !completion) {
+        return { duplicate: false, matched: true, rejected: 'status_not_v1', assignmentId: assignment.id }
+      }
       if (completion && assignment.status !== 'running') {
-        this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
+        this.store.putCallback({ key, body: accepted as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
         return { duplicate: false, matched: true, rejected: 'not-dispatched', assignmentId: assignment.id }
       }
-      this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
-      if (status === 'working' || status === '') return { duplicate: false, matched: true, assignmentId: assignment.id }
-      assignment.claim = { status, eventKey: key, text: event.claim, at: this.iso() }
+      this.store.putCallback({ key, body: accepted as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
+      if (status === '') return { duplicate: false, matched: true, assignmentId: assignment.id }
+      assignment.claim = { status, eventKey: key, at: this.iso() }
       if (status === 'done' || status === 'idle') {
         assignment.status = 'claimed'
         this.store.put('assignment', assignment.id, assignment)
         this.considerAcceptance(assignment)
-      } else if (status === 'blocked' || status === 'error') {
+      } else if (status === 'blocked') {
         assignment.status = 'blocked'
         assignment.block = {
           code: 'executor-blocked',
-          detail: event.blocked_reason || status,
+          detail: accepted.blocked_reason || status,
         }
         this.store.put('assignment', assignment.id, assignment)
         const ticket = this.ticket(assignment.ticketId)
@@ -305,7 +329,7 @@ export class Engine {
           ticket.channel,
           ticket.id,
           `派工 ${assignment.role} 被 gbb 标成 ${status}。这不是验收。`,
-          { assignmentId: assignment.id, status, blockedReason: event.blocked_reason ?? null },
+          { assignmentId: assignment.id, status, blockedReason: accepted.blocked_reason ?? null },
           ['blocked', assignment.id, key],
         )
       } else {
@@ -460,16 +484,16 @@ export class Engine {
       const ticket = this.ticket(String(row.payload.ticketId ?? row.key))
       const taskId = ticket.boundPane?.taskId
       if (!taskId) return undefined
-      return { op: 'read', args: readArgs(taskId) }
+      return { op: 'read', args: readArgs(taskId, ticket.owner) }
     }
     const assignmentId = String(row.payload.assignmentId ?? row.key)
     const assignment = this.store.get<Assignment>('assignment', assignmentId)
     if (!assignment || !assignment.gbbTaskId) return undefined
-    if (row.kind === 'status') return { op: 'status', args: statusArgs(assignment.gbbTaskId) }
-    if (row.kind === 'stop') return { op: 'stop', args: stopArgs(assignment.gbbTaskId) }
     const ticket = this.ticket(assignment.ticketId)
+    if (row.kind === 'status') return { op: 'status', args: statusArgs(assignment.gbbTaskId, ticket.owner) }
+    if (row.kind === 'stop') return { op: 'stop', args: stopArgs(assignment.gbbTaskId, ticket.owner) }
     const prompt = assignment.prompt ?? ''
-    if (row.kind === 'send') return { op: 'send', args: sendArgs(assignment.gbbTaskId, prompt) }
+    if (row.kind === 'send') return { op: 'send', args: sendArgs(assignment.gbbTaskId, prompt, ticket.owner) }
     const kind = assignment.plan?.kind
     if (!kind) return undefined
     const promptFile = path.join(this.ports.promptDir, `${assignment.id}.txt`)
@@ -506,7 +530,7 @@ export class Engine {
         return
       }
       if (result.outcome === 'blocked') {
-        this.blockedResult(row, result.code, result.requirement, result.argv)
+        this.blockedResult(row, result.code, result.requirement, result.argv, result.message, result.kind, result.kindSupport)
         return
       }
       if (result.outcome === 'error') {
@@ -845,7 +869,7 @@ export class Engine {
         'attention',
         ticket.channel,
         ticket.id,
-        'gbb handover 超时，结果未知。没有 read，也没有 send。',
+        'bac handover 超时，结果未知。没有 read，也没有 send。',
         { ticketId: ticket.id },
         ['handover-unknown', ticket.id],
       )
@@ -861,7 +885,7 @@ export class Engine {
         'attention',
         ticket.channel,
         ticket.id,
-        'dry-run 只记下 gbb handover 参数。没有注册 pane，没有 gbb read，接管未完成。',
+        'dry-run 只记下 bac handover 参数。没有注册 pane，没有 bac read，接管未完成。',
         { ticketId: ticket.id, argv: result.argv },
         ['handover-planned', ticket.id],
       )
@@ -895,7 +919,7 @@ export class Engine {
     if (result.outcome === 'unknown-timeout' && row.attempts < 3) {
       row.status = 'waiting'
       row.due = this.now().getTime() + 1_000
-      row.lastError = 'gbb read timeout'
+      row.lastError = 'bac read timeout'
       this.store.writeEffect(row)
       return
     }
@@ -912,19 +936,19 @@ export class Engine {
     if (result.outcome !== 'ok' || !text.trim()) {
       ticket.contextRead = text.trim() ? 'unknown' : result.outcome === 'ok' ? 'empty' : 'unknown'
       this.store.put('ticket', ticket.id, ticket)
-      this.blockHeld(ticket, 'context-unread', 'gbb read 没有读到上下文。快照不能单独完成接管，也不会 send。')
+      this.blockHeld(ticket, 'context-unread', 'bac read 没有读到上下文。快照不能单独完成接管，也不会 send。')
       this.notify(
         'attention',
         ticket.channel,
         ticket.id,
-        'gbb read 没有可用上下文。未完成项没有发出。',
+        'bac read 没有可用上下文。未完成项没有发出。',
         { ticketId: ticket.id, contextRead: ticket.contextRead },
         ['context-unread', ticket.id],
       )
       return
     }
     ticket.contextRead = 'read'
-    ticket.observedContext = { source: 'gbb-read', text: text.slice(0, 2000), at: this.iso() }
+    ticket.observedContext = { source: 'bac-read', text: text.slice(0, 2000), at: this.iso() }
     this.store.put('ticket', ticket.id, ticket)
     if (!ticket.boundPane?.kind) {
       this.blockHeld(ticket, 'kind-unknown', '已读到上下文，但种类未知，不会新开代理，也不会 send。')
@@ -935,7 +959,7 @@ export class Engine {
       'summary',
       ticket.channel,
       ticket.id,
-      'gbb handover 已注册，并且 gbb read 读到上下文，才继续未完成项。未知项仍然不执行。',
+      'bac handover 已注册，并且 bac read 读到上下文，才继续未完成项。未知项仍然不执行。',
       { ticketId: ticket.id, contextChars: text.length, simulated: result.simulated },
       ['context-read', ticket.id],
     )
@@ -989,7 +1013,15 @@ export class Engine {
     )
   }
 
-  private blockedResult(row: EffectRow, code: string, requirement: string | undefined, argv: string[], detail?: string): void {
+  private blockedResult(
+    row: EffectRow,
+    code: string,
+    requirement: string | undefined,
+    argv: string[],
+    detail?: string,
+    kind?: string,
+    kindSupport?: 'rejected' | 'unknown',
+  ): void {
     row.status = 'done'
     this.store.writeEffect(row)
     const assignment = this.assignmentFrom(row)
@@ -997,7 +1029,7 @@ export class Engine {
     this.releaseReservation(assignment)
     assignment.status = 'blocked'
     assignment.argv = argv
-    assignment.block = { code, requirement, detail: detail ?? code }
+    assignment.block = { code, requirement, detail: detail ?? code, kind, kindSupport }
     this.store.put('assignment', assignment.id, assignment)
   }
 
@@ -1263,7 +1295,7 @@ export class Engine {
 
   private summaryText(ticket: Ticket, assignments: Assignment[]): string {
     const parts = assignments.map((item) => `${item.role}:${item.plan?.kind ?? '未派'}/${item.status}`)
-    const sim = ticket.simulated ? '这是模拟路径，没有连接真实 gbb。' : '这不是模拟适配器。'
+    const sim = ticket.simulated ? '这是模拟路径，没有连接真实 bac。' : '这不是模拟适配器。'
     return `工单 ${ticket.id} 结束。${parts.join('，')}。验收看 harness 证据，不看自报。${sim}`
   }
 
@@ -1288,10 +1320,10 @@ export class Engine {
     return [
       `已记下 pane ${snapshot.identity.paneId} 的快照。这还不是完成的接管。`,
       `完成 ${ticket.doneKeys.length} 项，未完成 ${snapshot.work.open.length} 项，未知 ${ticket.unknownItems.length} 项。`,
-      '要先 gbb handover，再 gbb read。读不到上下文就不会 send。',
+      '要先 bac handover，再 bac read。读不到上下文就不会 send。',
       ticket.labelTrust ? '标签与快照一致。' : '标签不一致，没有用标签当身份。',
       `模型观察是 ${snapshot.identity.model.status}，来源 ${snapshot.identity.model.source}。`,
-      ticket.simulated ? '这条路径是模拟适配器，不是真实 gbb。' : 'dry-run 只生成参数，不会注册 pane。',
+      ticket.simulated ? '这条路径是模拟适配器，不是真实 bac。' : 'dry-run 只生成参数，不会注册 pane。',
     ].join('')
   }
 
@@ -1316,8 +1348,8 @@ export class Engine {
       `范围：${ticket.scope}`,
       `不要重复已完成项：${ticket.doneKeys.join('、') || '无'}。`,
       ticket.observedContext
-        ? `gbb read 摘录：${ticket.observedContext.text.slice(0, 500)}`
-        : '还没有 gbb read 上下文。',
+        ? `bac read 摘录：${ticket.observedContext.text.slice(0, 500)}`
+        : '还没有 bac read 上下文。',
       `未知项不要执行：${ticket.unknownItems.map((item) => item.note).join('；') || '无'}。`,
       `验收路径：${ticket.acceptancePath}`,
       `本阶段要提交的 harness 检查：${required.join('、')}。`,
@@ -1444,11 +1476,6 @@ export class Engine {
   private iso(): string {
     return this.now().toISOString()
   }
-}
-
-export function callbackDedupeKey(event: GbbEvent): string {
-  if (event.event_id) return `id:${event.event_id}`
-  return `f:${event.task_id ?? ''}|${event.event}|${event.status ?? ''}|${event.ts ?? ''}`
 }
 
 function taskIdFrom(result: AdapterResult): string | undefined {

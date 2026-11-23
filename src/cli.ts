@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { runDemos } from './demo.js'
 import { startHttp } from './http.js'
-import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED } from './gbb/contract.js'
+import { BAC_V1 } from './bac/contract.js'
 import type { AgentKind, Intensity, PreferencePatch, Role, WorkflowKind } from './core/model.js'
 import { isWorkflowKind } from './workflow/protocol.js'
 import { botTargetFromEnv } from './delivery.js'
@@ -15,14 +15,14 @@ import type { GbbEvent } from './core/model.js'
 
 const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这里只提供 CLI 和本机 API。
 
-  sbot demo                         跑四条模拟场景（fake adapter，不是真实 gbb）
-  sbot capabilities                 打印当前采用的 gbb 能力资料
+  sbot demo                         跑四条模拟场景（fake adapter，不是真实 bac，realE2E 为 false）
+  sbot capabilities                 打印已冻结的 bac v1 消费方资料。bac 二进制未实现
   sbot request --request-id ID --text TEXT --scope SCOPE --acceptance tests
                                     [--workflow feature|bugfix|verify] [--head SHA]
                                     默认 real dry-run，不会启动代理。不写 --workflow 时沿用偏好，默认 off
-  sbot request ... --simulate       用模拟的 launch-kind 契约和 fake adapter
+  sbot request ... --simulate       用 fake adapter。不会把 pi 改写成 codex
   sbot takeover --snapshot FILE     导入接管快照。只有 pane id 会被拒绝
-  sbot callback --json FILE         写入一条 gbb 回调
+  sbot callback --json FILE         写入一条 bac v1 回调
   sbot evidence --assignment ID --check role:execute=ok --producer harness
   sbot preference recommend           给出角色选项。确认前不改偏好
   sbot facts [--probe codex|grok]    默认不探测。probe 才运行官方命令，失败记 unknown
@@ -38,7 +38,7 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot inbox --failed
   sbot inbox ack --id ID
   sbot inbox retry --id ID          用同一个消息 id 再投一次。不是 exactly-once
-  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn gbb，且仍不绕过 gbb
+  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn bac。本仓库不安装 bac，也不直接调用 hc
   sbot smoke                        打印本机以后的验收步骤，并只做本地 dry-run
 
 状态目录：SUPERBOT_STATE，默认 ./data/superbot
@@ -57,8 +57,8 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === 'smoke') return smoke()
   if (command === 'capabilities') {
-    const profile = flag(rest, '--simulate') ? GBB_LAUNCH_KIND_V1_SIMULATED : GBB_033
-    process.stdout.write(`${JSON.stringify({ profile, note: profile.simulated ? '模拟契约，不是已安装的 gbb' : '按 gbb 0.3.3 源码归纳，不是对本机的探测' }, null, 2)}\n`)
+    const profile = BAC_V1
+    process.stdout.write(`${JSON.stringify({ profile, realE2E: false, note: 'bac v1 消费方契约已冻结。bac 二进制未实现，这不是对本机的探测。' }, null, 2)}\n`)
     return 0
   }
   const runtime = open(rest)
@@ -89,7 +89,7 @@ function open(rest: string[]): Runtime {
   return new Runtime({
     dir: process.env.SUPERBOT_STATE || path.join(process.cwd(), 'data', 'superbot'),
     adapter: simulate ? 'fake' : 'real',
-    profile: simulate ? GBB_LAUNCH_KIND_V1_SIMULATED : GBB_033,
+    profile: BAC_V1,
     mode: live ? 'live' : 'dry-run',
     allowLive: live,
     bot: botTargetFromEnv(),
@@ -210,22 +210,19 @@ function preference(runtime: Runtime, rest: string[]): unknown {
 
 function smoke(): number {
   const lines = [
-    'super-bot 本机 smoke（此脚本不会连接用户的机器，也不会调用 gbb）',
+    'super-bot 本机 smoke（此脚本不会连接用户的机器，也不会调用 bac 或 hc）',
     '',
-    '稍后在操作者自己的机器上：',
-    '1. 确认 gbb 版本是 0.3.3，revision bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6。',
-    '2. SUPERBOT_STATE 指向一个新目录，运行 sbot capabilities。launchKinds 应只有 grok 和 codex。',
+    'bac 二进制尚未实现。下面不是真机步骤。',
+    '1. 契约冻结在 ae859908ed07684997c786d1744e5f724f087259，父提交 bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6。',
+    '2. sbot capabilities。launchKinds 只有 grok 和 codex。runtimeImplemented 是 false。',
     '3. sbot request --request-id smoke-1 --text "只读检查" --scope "不改仓库" --acceptance tests',
-    '   这是 dry-run。执行阶段应停在 capability，requirement 是 gbb.launch.kind=pi，参数里没有 codex 顶上。',
-    '4. 不要把 hc ls 的输出当成当前模型。模型字段应保持 unknown，source 含 hc-get-has-no-model-field。',
-    '5. 接管必须带完整快照。sbot takeover --snapshot examples/takeover.json。只给 pane id 会失败。',
-    '6. 把 gbb 里 owner grok-bot 的 webhook 指到 sbot serve 的 /v1/callbacks/gbb。',
-    '   回调没有终端输出，也没有持久重试。重复投递应被去重。',
-    '7. 代理自报 done 之后，工单仍是 claimed。由 bot 提交 harness 证据后才验收。',
-    '8. 若要真的 spawn gbb，需要另一次明确打开 live，并且这不是本草稿的默认。',
+    '   这是 dry-run。执行阶段停在 kind_unsupported，kind_support 是 rejected，不会改写成 codex。',
+    '4. 不要把 hc ls 的输出当成当前模型。模型与额度不进回调。',
+    '5. 接管只能 bac handover。pane id 拒绝 planned、pending、unknown、fake、placeholder，以及 herdr_space / herdr_tab。',
+    '6. 回调 POST /v1/callbacks/bac。source 必须是 bot-as-collie，version 必须是整数 1。去重键是 event_id。',
+    '7. realE2E 保持 false。fixture 和脚本注入的回调不是端到端。',
     '',
-    '本次只确认：默认资料是 gbb 0.3.3，pi 不在 launchKinds 里。',
-    JSON.stringify({ profile: GBB_033.id, launchKinds: GBB_033.launchKinds, realE2E: false }),
+    JSON.stringify({ profile: BAC_V1.id, launchKinds: BAC_V1.launchKinds, runtimeImplemented: false, realE2E: false }),
   ]
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0

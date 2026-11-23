@@ -1,4 +1,4 @@
-import type { CapabilityProfile } from './contract.js'
+import type { CapabilityProfile, KindSupport } from './contract.js'
 
 export type AdapterMode = 'fake' | 'dry-run' | 'live'
 
@@ -18,12 +18,20 @@ export interface AdapterCall {
 export type AdapterResult =
   | { outcome: 'started'; argv: string[]; paneId?: string; taskId?: string; simulated: boolean }
   | { outcome: 'planned'; argv: string[]; dryRun: true }
-  | { outcome: 'blocked'; code: string; requirement?: string; argv: string[] }
+  | {
+      outcome: 'blocked'
+      code: string
+      requirement?: string
+      argv: string[]
+      kind?: string
+      kindSupport?: KindSupport
+      message?: string
+    }
   | { outcome: 'unknown-timeout'; argv: string[] }
   | { outcome: 'ok'; argv: string[]; simulated: boolean; body?: Record<string, unknown> }
   | { outcome: 'error'; code: string; message: string; argv: string[] }
 
-export interface GbbAdapter {
+export interface BacAdapter {
   readonly mode: AdapterMode
   readonly profile: CapabilityProfile
   readonly calls: AdapterCall[]

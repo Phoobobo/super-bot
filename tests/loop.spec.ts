@@ -1,8 +1,9 @@
 import http from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { launchArgs } from '../src/gbb/argv.js'
-import { RealGbb } from '../src/gbb/real.js'
-import { GBB_033 } from '../src/gbb/contract.js'
+import { launchArgs } from '../src/bac/argv.js'
+import { RealBac } from '../src/bac/real.js'
+import { BAC_V1 } from '../src/bac/contract.js'
+import { doneEvent } from './bac-event.js'
 import { resolveObservation } from '../src/observe.js'
 import { configQuota } from '../src/quota.js'
 import { fixedQuota } from '../src/quota.js'
@@ -10,7 +11,7 @@ import { exampleSnapshot } from '../src/demo.js'
 import { startHttp } from '../src/http.js'
 import { baseRequest, openRuntime, stock } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
-import type { SpawnFn } from '../src/gbb/adapter.js'
+import type { SpawnFn } from '../src/bac/adapter.js'
 
 const opened: Runtime[] = []
 afterEach(() => {
@@ -72,14 +73,7 @@ describe('bot loop', () => {
       })
       const created = (await response.json()) as { ticketId: string }
       const assignment = runtime.view(created.ticketId).assignments[0]
-      await runtime.callback({
-        event: 'agent_status',
-        event_id: 'loop-done',
-        task_id: assignment?.gbbTaskId,
-        status: 'done',
-        ts: '2026-01-01T00:00:00.000Z',
-        owner: 'grok-bot',
-      })
+      await runtime.callback(doneEvent(assignment?.gbbTaskId, 'loop-done'))
       await runtime.evidence(assignment?.id ?? '', 'harness', [
         { id: 'role:design', ok: true },
         { id: 'tests', ok: true },
@@ -135,14 +129,8 @@ describe('bot loop', () => {
     expect(new Set(ids).size).toBe(ids.length)
     const before = bot.posts.length
     const assignment = second.view(created.ticketId ?? '').assignments[0]
-    const rejected = await second.callback({
-      event: 'agent_status',
-      task_id: assignment?.gbbTaskId,
-      status: 'done',
-      ts: '2026-01-01T00:00:00.000Z',
-      owner: 'other-bot',
-    })
-    expect(rejected.rejected).toBe('owner-mismatch')
+    const rejected = await second.callback({ ...doneEvent(assignment?.gbbTaskId, 'restart-owner'), owner: 'other-bot' })
+    expect(rejected.rejected).toBe('owner_mismatch')
     expect(second.view(created.ticketId ?? '').assignments[0]?.status).not.toBe('claimed')
     expect(bot.posts).toHaveLength(before)
     await bot.close()
@@ -157,7 +145,7 @@ describe('bot loop', () => {
     expect(view.mandate.acceptance).toEqual(['tests'])
     expect(view.ticket.unknownItems).toHaveLength(1)
     expect(view.assignments.find((item) => item.itemKey === 'done-1')?.status).toBe('skipped')
-    expect(view.ticket.observedContext?.source).toBe('gbb-read')
+    expect(view.ticket.observedContext?.source).toBe('bac-read')
     expect(runtime.adapter.calls.some((call) => call.op === 'launch')).toBe(false)
     expect(view.ticket.phase).toBe('open')
   })
@@ -187,11 +175,11 @@ describe('facts and live guard', () => {
 
   it('does not spawn on dry-run and does not launch pi on gbb 0.3.3', async () => {
     const spawn: SpawnFn = () => Promise.resolve({ code: 0, stdout: '{}', timedOut: false })
-    const dry = new RealGbb({ mode: 'dry-run', profile: GBB_033, spawn })
+    const dry = new RealBac({ mode: 'dry-run', profile: BAC_V1, spawn })
     const blocked = await dry.launch(launchArgs({ repo: '/work/example-repo', kind: 'pi', taskId: 't1', owner: 'grok-bot', promptFile: '/tmp/prompt.txt' }))
     expect(blocked.outcome).toBe('blocked')
     expect(dry.calls[0]?.argv.includes('pi')).toBe(true)
-    const refused = new RealGbb({ mode: 'live', profile: GBB_033, allowLive: false, spawn })
+    const refused = new RealBac({ mode: 'live', profile: BAC_V1, allowLive: false, spawn })
     await expect(
       refused.launch(launchArgs({ repo: '/work/example-repo', kind: 'codex', taskId: 't2', owner: 'grok-bot', promptFile: '/tmp/prompt.txt' })),
     ).rejects.toThrow(/allowLive/)
@@ -200,7 +188,7 @@ describe('facts and live guard', () => {
       shell = request.shell
       return Promise.resolve({ code: 0, stdout: '{}', timedOut: false })
     }
-    const live = new RealGbb({ mode: 'live', profile: GBB_033, allowLive: true, spawn: watched })
+    const live = new RealBac({ mode: 'live', profile: BAC_V1, allowLive: true, spawn: watched })
     const started = await live.launch(launchArgs({ repo: '/work/example-repo', kind: 'codex', taskId: 't3', owner: 'grok-bot', promptFile: '/tmp/prompt.txt' }))
     expect(started.outcome).toBe('ok')
     expect(shell).toBe(false)
@@ -211,7 +199,7 @@ describe('facts and live guard', () => {
     const runtime = use(openRuntime({ profile: stock }))
     const proposal = runtime.recommend()
     expect(proposal.options.map((option) => option.id)).toEqual(['keep', 'more-grok', 'substitutes-only'])
-    expect(proposal.recommendation).toContain('不会悄悄换成 codex')
+    expect(proposal.recommendation).toContain('不会把 pi 改写成 codex')
     const kept = runtime.confirm(proposal.id, 'keep')
     expect(kept.version).toBe(1)
     expect(kept.executeSubstitutes).toEqual([])
@@ -220,7 +208,9 @@ describe('facts and live guard', () => {
     expect(saved.executeSubstitutes).toEqual(['codex'])
     const created = await baseRequest(runtime, 'sub-1', { phases: ['execute'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
-    expect(assignment?.plan?.sample.selection).toBe('user-approved-substitute')
-    expect(assignment?.plan?.kind).toBe('codex')
+    expect(assignment?.plan?.kind).toBe('pi')
+    expect(assignment?.block?.code).toBe('kind_unsupported')
+    expect(assignment?.block?.kindSupport).toBe('rejected')
+    expect(runtime.adapter.calls.some((call) => call.op === 'launch' && call.argv.includes('codex'))).toBe(false)
   })
 })

@@ -1,5 +1,8 @@
+import { acceptPaneId } from '../bac/pane.js'
+
 /**
- * Pane ids are opaque strings printed by hc. A name prefix is not an id.
+ * Pane ids are opaque strings printed by the backend. A name prefix is not an id.
+ * Reserved words and herdr_space / herdr_tab are rejected.
  * realE2E stays false unless a live run leaves the planned state, the script
  * did not inject the callback, and the request's own summary was delivered.
  */
@@ -10,14 +13,10 @@ export function liveTakeoverPane(value: string | undefined):
   if (typeof value !== 'string' || value.trim() === '') {
     return {
       ok: false,
-      reason: 'live takeover needs SUPERBOT_TEST_PANE set to the pane id hc printed. This script does not list panes and does not invent one.',
+      reason: 'live takeover needs SUPERBOT_TEST_PANE set to the pane id the backend printed. This script does not list panes and does not invent one.',
     }
   }
-  const paneId = value.trim()
-  if (paneId.includes(' ') || paneId.startsWith('-')) {
-    return { ok: false, reason: 'pane id must be a single opaque token, not a flag or a sentence' }
-  }
-  return { ok: true, paneId }
+  return acceptPaneId(value)
 }
 
 export function observeAcceptance(input: {

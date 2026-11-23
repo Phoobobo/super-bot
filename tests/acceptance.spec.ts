@@ -4,7 +4,7 @@ import { exampleSnapshot } from '../src/demo.js'
 import { startHttp } from '../src/http.js'
 import { baseRequest, openRuntime, stock } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
-import type { GbbEvent } from '../src/core/model.js'
+import { doneEvent } from './bac-event.js'
 
 const opened: Runtime[] = []
 afterEach(() => {
@@ -59,20 +59,16 @@ describe('acceptance gaps', () => {
     const runtime = use(openRuntime())
     const created = await baseRequest(runtime, 'owner-1', { phases: ['design'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
-    const event: GbbEvent = {
-      event: 'agent_status',
-      task_id: assignment?.gbbTaskId,
-      status: 'done',
-      ts: '2026-01-01T00:00:00.000Z',
-    }
-    const missing = await runtime.callback(event)
-    const mismatch = await runtime.callback({ ...event, owner: 'other-bot', ts: '2026-01-01T00:00:01.000Z' })
-    expect(missing.rejected).toBe('owner-missing')
-    expect(mismatch.rejected).toBe('owner-mismatch')
+    const event = doneEvent(assignment?.gbbTaskId, 'owner-1')
+    const missing = await runtime.callback({ ...event, owner: null })
+    const mismatch = await runtime.callback({ ...doneEvent(assignment?.gbbTaskId, 'owner-2'), owner: 'other-bot' })
+    expect(missing.rejected).toBe('owner_required')
+    expect(mismatch.rejected).toBe('owner_mismatch')
     expect(runtime.view(created.ticketId ?? '').assignments[0]?.status).toBe('running')
+    const accepted = doneEvent(assignment?.gbbTaskId, 'owner-3')
     const [first, second] = await Promise.all([
-      runtime.callback({ ...event, owner: 'grok-bot', ts: '2026-01-01T00:00:02.000Z' }),
-      runtime.callback({ ...event, owner: 'grok-bot', ts: '2026-01-01T00:00:02.000Z', route: 'fallback' }),
+      runtime.callback(accepted),
+      runtime.callback({ ...accepted, route: 'fallback' }),
     ])
     expect([first.duplicate, second.duplicate].filter(Boolean)).toHaveLength(1)
     expect(runtime.view(created.ticketId ?? '').assignments[0]?.status).toBe('claimed')

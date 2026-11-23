@@ -18,19 +18,19 @@ npm pack --dry-run
 2. 健康检查：`curl -s http://127.0.0.1:47231/v1/health`。`mode` 应是 `dry-run`。
 3. 要让结果推回原来的 Bot，启动前设置 `SUPERBOT_BOT_URL=http://127.0.0.1:<bot-port>/superbot`。可选 `SUPERBOT_BOT_TOKEN` 只放在环境里，不要写进仓库。
 4. 没有 `SUPERBOT_BOT_URL` 时，结果停在 inbox，由 Bot `GET /v1/inbox` 再 ack。
-5. gbb 的 owner `grok-bot` webhook 指到 `http://127.0.0.1:47231/v1/callbacks/gbb`。
+5. 回调送到 `http://127.0.0.1:47231/v1/callbacks/bac`。`source` 必须是 `bot-as-collie`，`version` 必须是整数 1。bac 二进制尚未安装，这一步还不能在现网切。
 
 ## 下一轮预期
 
 `sbot facts`：模型来源 `hc-get-has-no-model-field`，origin `unknown`。额度来源 `no-quota-channel`，origin `unknown`。`realE2E` 是 false。
 
-`sbot request --request-id mac-1 --text "只读检查" --scope "不改仓库" --acceptance tests --phases design`：设计阶段生成 `gbb launch ... --kind codex`，状态 `planned`，没有进程。
+`sbot request --request-id mac-1 --text "只读检查" --scope "不改仓库" --acceptance tests --phases design`：设计阶段生成 `bac launch ... --kind codex`，状态 `planned`，没有进程。
 
-同一条命令如果阶段含 `execute`：执行派工 `blocked`，`requirement` 是 `gbb.launch.kind=pi`。参数里可以出现 kind pi，但不会 spawn，也不会改成 codex。
+同一条命令如果阶段含 `execute`：执行派工 `blocked`，`code` 是 `kind_unsupported`，`kind_support` 是 `rejected`。不会 spawn，也不会改成 codex。
 
-`sbot preference recommend` 只给出选项。确认 `substitutes-only` 之后，pi 不能 launch 才会标 `user-approved-substitute`。
+`sbot preference recommend` 只给出选项。确认 `substitutes-only` 只记下名单，不改写 launch kind。
 
-`sbot serve --live` 才会 spawn，并且仍然只调用 `gbb`，`shell` 为 false。不要和 `--simulate` 一起用。
+`sbot serve --live` 才会尝试 spawn `bac`，`shell` 为 false。bac 二进制未实现，不要在现网打开。不要和 `--simulate` 一起用。
 
 操作者提供的额度或模型文件是 `config`，不是官方观测。文件里写成 observed 也会被记成 config。
 

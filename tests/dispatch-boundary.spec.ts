@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { GbbEvent } from '../src/core/model.js'
+import { doneEvent } from './bac-event.js'
 import { baseRequest, openRuntime, stock } from './helpers.js'
+import { defaultWeights } from '../src/preferences/defaults.js'
 import type { Runtime } from '../src/runtime.js'
 
 const opened: Runtime[] = []
@@ -14,8 +15,14 @@ function use(runtime: Runtime): Runtime {
   return runtime
 }
 
-function done(taskId: string | undefined, ts: string, owner = 'grok-bot'): GbbEvent {
-  return { event: 'agent_status', task_id: taskId, status: 'done', ts, owner }
+function done(taskId: string | undefined, ts: string, owner = 'grok-bot') {
+  return doneEvent(taskId, ts, owner)
+}
+
+function allowCodexExecute(runtime: Runtime) {
+  runtime.confirm(runtime.propose({
+    weights: { ...defaultWeights(), execute: [{ kind: 'codex', weight: 100 }] },
+  }).id, 'apply')
 }
 
 describe('dispatch boundary', () => {
@@ -87,7 +94,7 @@ describe('dispatch boundary', () => {
     const created = await baseRequest(runtime, 'wrong-1', { phases: ['design'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
     const stranger = await runtime.callback(done(assignment?.gbbTaskId, '2026-01-01T00:00:03.000Z', 'other-bot'))
-    expect(stranger.rejected).toBe('owner-mismatch')
+    expect(stranger.rejected).toBe('owner_mismatch')
     const missing = await runtime.callback(done('task-does-not-exist', '2026-01-01T00:00:04.000Z'))
     expect(missing.matched).toBe(false)
     const view = runtime.view(created.ticketId ?? '')
@@ -98,6 +105,7 @@ describe('dispatch boundary', () => {
 
   it('does not accept a stale head after a real callback', async () => {
     const runtime = use(openRuntime())
+    allowCodexExecute(runtime)
     const created = await baseRequest(runtime, 'stale-1', { workflow: 'feature' })
     const trace = runtime.view(created.ticketId ?? '').assignments[0]
     if (!trace) throw new Error('missing trace')

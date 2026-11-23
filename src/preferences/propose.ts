@@ -65,7 +65,7 @@ export function buildProposal(current: Preference, changes: PreferencePatch, at:
   const recommendation = changes.workflow?.defaultKind && changes.workflow.defaultKind !== 'off'
     ? `建议把新工单的默认流程设为 ${changes.workflow.defaultKind}。这不改变设计 codex、执行 pi、验证 codex，也不取消已经在跑的工单。${impact}`
     : changes.executeSubstitutes?.length
-    ? `pi 在 gbb 0.3.3 上不能新开。若你确认替代，之后的执行阶段会标明 user-approved-substitute，而不会悄悄换成 codex。${impact}`
+    ? `bac v1 拒绝 launch pi。确认后只记下替代名单，不会把 pi 改写成 codex。${impact}`
     : `建议先看影响再确认。${impact}`
   return {
     id: stableId('prp', [String(current.version), at, JSON.stringify(changes)]),
@@ -91,7 +91,7 @@ export function roleRecommendation(current: Preference, at: string): Proposal {
     at,
     changes: {},
     recommendation:
-      '建议保持设计与验证以 codex 为主，并给 grok、antigravity 一小段抽样。执行继续只选 pi。gbb 0.3.3 不能新开 pi 或 antigravity。只有确认 substitutes-only 之后，pi 不能 launch 时才会标 user-approved-substitute，不会悄悄换成 codex。',
+      '建议保持设计与验证以 codex 为主。执行偏好仍是 pi，但 bac v1 拒绝 launch pi 和 antigravity，kind_support 为 rejected。确认 substitutes-only 只记下替代名单，不会把 pi 改写成 codex。',
     options: [
       {
         id: 'keep',
@@ -107,8 +107,8 @@ export function roleRecommendation(current: Preference, at: string): Proposal {
       },
       {
         id: 'substitutes-only',
-        title: '仅在 pi 不能 launch 时允许 codex',
-        impact: '确认后才会写入。派工会标 user-approved-substitute，而不是默认改派。',
+        title: '记下 codex 替代，但不改写 launch kind',
+        impact: '确认后写入 executeSubstitutes。bac v1 仍拒绝 pi，不会因此 launch codex。',
         patch: { executeSubstitutes: ['codex'] },
       },
     ],
@@ -133,7 +133,7 @@ function describePatch(current: Preference, changes: PreferencePatch): string {
   if (changes.executeSubstitutes) {
     parts.push(
       changes.executeSubstitutes.length
-        ? `执行替代设为 ${changes.executeSubstitutes.join('、')}，仅在 pi 不能 launch 时使用`
+        ? `执行替代名单设为 ${changes.executeSubstitutes.join('、')}。bac v1 不会据此把 pi 改写成这些 kind`
         : '清掉执行替代',
     )
   }

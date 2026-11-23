@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED } from './gbb/contract.js'
+import { BAC_V1 } from './bac/contract.js'
+import { callbackEventId } from './bac/callback.js'
 import type { GbbEvent } from './core/model.js'
 import { Runtime } from './runtime.js'
 import type { TakeoverSnapshot } from './takeover/snapshot.js'
@@ -25,7 +26,7 @@ export async function runDemos(root?: string): Promise<DemoReport> {
 }
 
 async function newRequest(dir: string): Promise<DemoReport['scenarios'][number]> {
-  const runtime = new Runtime({ dir, adapter: 'fake', profile: GBB_LAUNCH_KIND_V1_SIMULATED })
+  const runtime = new Runtime({ dir, adapter: 'fake', profile: BAC_V1 })
   try {
     const created = await runtime.request({
       actor: 'grok-bot',
@@ -40,28 +41,29 @@ async function newRequest(dir: string): Promise<DemoReport['scenarios'][number]>
     })
     if (!created.ticketId) return fail('new-request', '没有工单')
     let view = runtime.view(created.ticketId)
-    for (const role of ['design', 'execute', 'verify'] as const) {
-      const assignment = view.assignments.find((item) => item.role === role)
-      if (!assignment) return fail('new-request', `缺少 ${role}`)
-      if (assignment.status !== 'running') return fail('new-request', `${role} 状态是 ${assignment.status}`)
-      await runtime.callback(doneEvent(assignment.gbbTaskId ?? '', `demo-${role}`))
-      const checks = [{ id: `role:${role}`, ok: true }]
-      if (role === 'verify') checks.push({ id: 'tests', ok: true })
-      await runtime.evidence(assignment.id, 'harness', checks)
-      view = runtime.view(created.ticketId)
+    const design = view.assignments.find((item) => item.role === 'design')
+    if (!design || design.status !== 'running' || design.plan?.kind !== 'codex') {
+      return fail('new-request', `设计阶段是 ${design?.status}/${design?.plan?.kind}`)
     }
-    const summary = view.messages.find((item) => item.purpose === 'summary')
-    const kinds = view.assignments.map((item) => item.plan?.kind).join(',')
-    if (view.ticket.phase !== 'ended' || !summary) return fail('new-request', '工单没有向 bot 汇总')
-    if (kinds !== 'codex,pi,codex') return fail('new-request', `分工是 ${kinds}`)
-    return { name: 'new-request', ok: true, detail: summary.text }
+    await runtime.callback(doneEvent(design.gbbTaskId ?? '', 'demo-design'))
+    await runtime.evidence(design.id, 'harness', [{ id: 'role:design', ok: true }])
+    view = runtime.view(created.ticketId)
+    const execute = view.assignments.find((item) => item.role === 'execute')
+    if (execute?.block?.code !== 'kind_unsupported' || execute.block.kindSupport !== 'rejected') {
+      return fail('new-request', `执行阶段是 ${execute?.status}/${execute?.block?.code}`)
+    }
+    if (runtime.adapter.calls.some((call) => call.argv.includes('--kind') && call.argv.includes('codex') && call.argv.includes('pi'))) {
+      return fail('new-request', 'pi 被改写成了别的 kind')
+    }
+    if (view.ticket.phase === 'ended') return fail('new-request', 'pi 被拒绝后工单不应结束')
+    return { name: 'new-request', ok: true, detail: 'design 可以派 codex。execute 的 pi 是 kind_unsupported，kind_support rejected，没有改写。realE2E false。' }
   } finally {
     runtime.close()
   }
 }
 
 async function takeover(dir: string): Promise<DemoReport['scenarios'][number]> {
-  const runtime = new Runtime({ dir, adapter: 'fake', profile: GBB_033 })
+  const runtime = new Runtime({ dir, adapter: 'fake', profile: BAC_V1 })
   try {
     const created = await runtime.takeover(exampleSnapshot())
     const view = runtime.view(created.ticketId)
@@ -81,7 +83,7 @@ async function takeover(dir: string): Promise<DemoReport['scenarios'][number]> {
 }
 
 async function preference(dir: string): Promise<DemoReport['scenarios'][number]> {
-  const runtime = new Runtime({ dir, adapter: 'fake', profile: GBB_033 })
+  const runtime = new Runtime({ dir, adapter: 'fake', profile: BAC_V1 })
   try {
     const blocked = await runtime.request({
       actor: 'grok-bot',
@@ -95,7 +97,9 @@ async function preference(dir: string): Promise<DemoReport['scenarios'][number]>
       repo: '/work/example-repo',
     })
     const before = blocked.ticketId ? runtime.view(blocked.ticketId).assignments[0] : undefined
-    if (before?.block?.code !== 'capability') return fail('preference', '替换前应该因能力不足停下')
+    if (before?.block?.code !== 'kind_unsupported' || before.block.kindSupport !== 'rejected') {
+      return fail('preference', '执行阶段应拒绝 pi')
+    }
     const proposal = runtime.propose({ executeSubstitutes: ['codex'] })
     runtime.confirm(proposal.id, 'apply')
     const after = await runtime.request({
@@ -110,8 +114,11 @@ async function preference(dir: string): Promise<DemoReport['scenarios'][number]>
       repo: '/work/example-repo',
     })
     const next = after.ticketId ? runtime.view(after.ticketId).assignments[0] : undefined
-    if (next?.plan?.kind !== 'codex' || next.plan.sample.selection !== 'user-approved-substitute') {
-      return fail('preference', '确认后的执行阶段没有使用已批准替代')
+    if (!next?.plan || next.plan.kind !== 'pi' || next.block?.code !== 'kind_unsupported') {
+      return fail('preference', '确认替代后仍不得把 pi 改写成 codex')
+    }
+    if (runtime.adapter.calls.some((call) => call.op === 'launch' && call.argv[call.argv.indexOf('--kind') + 1] === 'codex')) {
+      return fail('preference', 'pi 派工发出了 codex launch')
     }
     runtime.revert(1)
     const reverted = await runtime.request({
@@ -126,7 +133,7 @@ async function preference(dir: string): Promise<DemoReport['scenarios'][number]>
       repo: '/work/example-repo',
     })
     const third = reverted.ticketId ? runtime.view(reverted.ticketId).assignments[0] : undefined
-    if (third?.block?.code !== 'capability') return fail('preference', '撤回后仍在使用替代')
+    if (third?.block?.code !== 'kind_unsupported') return fail('preference', '撤回后的执行阶段不再是拒绝 pi')
     return { name: 'preference', ok: true, detail: proposal.recommendation }
   } finally {
     runtime.close()
@@ -134,7 +141,7 @@ async function preference(dir: string): Promise<DemoReport['scenarios'][number]>
 }
 
 async function workflowFeature(dir: string): Promise<DemoReport['scenarios'][number]> {
-  const runtime = new Runtime({ dir, adapter: 'fake', profile: GBB_LAUNCH_KIND_V1_SIMULATED })
+  const runtime = new Runtime({ dir, adapter: 'fake', profile: BAC_V1 })
   try {
     const created = await runtime.request({
       actor: 'grok-bot',
@@ -149,70 +156,69 @@ async function workflowFeature(dir: string): Promise<DemoReport['scenarios'][num
       workflow: 'feature',
     })
     if (!created.ticketId) return fail('workflow', '没有工单')
-    const steps = [
-      { id: 'trace', head: 'aaa111', command: 'npm test', output: 'design notes' },
-      { id: 'implement', head: 'bbb222', command: 'npm test', output: 'patch applied' },
-      { id: 'verify', head: 'bbb222', command: 'npm test', output: '1 passed' },
-    ]
-    for (const step of steps) {
-      const view = runtime.view(created.ticketId)
-      const assignment = view.assignments.find((item) => item.stepId === step.id)
-      if (!assignment) return fail('workflow', `缺少 ${step.id}`)
-      if (assignment.status !== 'running') return fail('workflow', `${step.id} 状态是 ${assignment.status}`)
-      if (view.assignments.filter((item) => item.writes && item.status === 'running').length > 1) {
-        return fail('workflow', '同时有两个写入步骤')
-      }
-      await runtime.callback(doneEvent(assignment.gbbTaskId ?? '', `demo-${step.id}`))
-      const checks = step.id === 'verify' ? [{ id: 'tests', ok: true }] : []
-      const verifier = step.id === 'verify' ? assignment.id : undefined
-      await runtime.evidence(assignment.id, 'harness', checks, 'grok-bot', {
-        head: step.head,
-        command: step.command,
-        output: step.output,
-        verifier,
-      })
-    }
+    const trace = runtime.view(created.ticketId).assignments.find((item) => item.stepId === 'trace')
+    if (!trace || trace.status !== 'running') return fail('workflow', `trace 状态是 ${trace?.status}`)
+    await runtime.callback(doneEvent(trace.gbbTaskId ?? '', 'demo-trace'))
+    await runtime.evidence(trace.id, 'harness', [], 'grok-bot', { head: 'aaa111', command: 'npm test', output: 'design notes' })
     const view = runtime.view(created.ticketId)
-    const kinds = view.assignments.map((item) => `${item.stepId}:${item.plan?.kind}`).join(',')
-    if (view.ticket.phase !== 'ended') return fail('workflow', '工单没有结束')
-    if (kinds !== 'trace:codex,implement:pi,verify:codex') return fail('workflow', `分工是 ${kinds}`)
-    if (view.ticket.workflow?.acceptedHead !== 'bbb222') return fail('workflow', '验收 head 没有钉在实现步骤')
+    const implement = view.assignments.find((item) => item.stepId === 'implement')
+    if (implement?.block?.code !== 'kind_unsupported' || implement.block.kindSupport !== 'rejected') {
+      return fail('workflow', `implement 是 ${implement?.status}/${implement?.block?.code}`)
+    }
+    if (runtime.adapter.calls.some((call) => call.op === 'launch' && call.argv.includes('pi'))) {
+      return fail('workflow', '拒绝的 pi 仍然被 launch')
+    }
+    if (view.ticket.phase === 'ended') return fail('workflow', '实现步骤被拒绝后工单不应结束')
     return {
       name: 'workflow',
       ok: true,
-      detail: 'feature 走了 trace→implement→verify。fake adapter，realE2E false。pstack 的 Cursor 子代理、arena 和 automations 没有接进来。',
+      detail: 'feature 的 trace 可以走 codex。implement 的 pi 被 kind_unsupported 拒绝，没有改写。fake adapter，realE2E false。',
     }
   } finally {
     runtime.close()
   }
 }
 
-function doneEvent(taskId: string, eventId: string): GbbEvent {
+function doneEvent(taskId: string, label: string): GbbEvent {
+  const generation = generationFrom(`${taskId}|${label}`)
+  const event = 'agent_status'
+  const status = 'done'
+  const paneId = 't9'
   return {
-    source: 'grokbot-bridge-herdr',
-    version: '0.3.3',
-    event: 'agent_status',
-    event_id: eventId,
+    source: 'bot-as-collie',
+    version: 1,
+    event,
+    status,
+    generation,
+    attempt: 1,
+    event_id: callbackEventId(paneId, event, status, generation),
     task_id: taskId,
-    status: 'done',
-    ts: '2026-01-01T00:00:00.000Z',
+    pane_id: paneId,
     owner: 'grok-bot',
     route: 'owner',
-    claim: '我做完了',
+    ts: '2026-11-23T00:00:00Z',
+    backend: 'hc',
+    agent_kind: 'codex',
   }
+}
+
+function generationFrom(label: string): number {
+  let value = 0
+  for (const char of label) value = (Math.imul(value, 33) + char.charCodeAt(0)) >>> 0
+  return (value % 1_000_000) + 1
 }
 
 export function exampleSnapshot(): TakeoverSnapshot {
   return {
     schema: 'superbot.takeover.v1',
-    source: { adapter: 'gbb', command: 'status', observedAt: '2026-01-01T00:00:00.000Z' },
+    source: { adapter: 'bac', command: 'status', observedAt: '2026-01-01T00:00:00.000Z' },
     identity: {
       paneId: 'term-example',
       taskId: 'task-example',
       backend: 'hc',
       origin: 'existing',
       owner: 'grok-bot',
-      kind: { status: 'known', value: 'pi', source: 'operator-snapshot', observedAt: '2026-01-01T00:00:00.000Z' },
+      kind: { status: 'known', value: 'codex', source: 'operator-snapshot', observedAt: '2026-01-01T00:00:00.000Z' },
       model: { status: 'unknown', source: 'hc-get-has-no-model-field', observedAt: '2026-01-01T00:00:00.000Z' },
       labelsConsistent: false,
       labelNote: 'gbb list 的标签和登记不一致，快照不采用标签上的任务名',

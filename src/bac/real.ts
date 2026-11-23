@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import type { CapabilityProfile } from './contract.js'
-import type { AdapterCall, AdapterResult, GbbAdapter, SpawnFn, SpawnRequest } from './adapter.js'
-import { assertGbbBin, kindOf } from './argv.js'
-import { isAgentKind } from '../core/model.js'
+import { classifyLaunchKind } from './contract.js'
+import type { AdapterCall, AdapterResult, BacAdapter, SpawnFn, SpawnRequest } from './adapter.js'
+import { assertBacBin, kindOf } from './argv.js'
 import { UserError } from '../core/errors.js'
 
 export interface RealOptions {
@@ -11,42 +11,34 @@ export interface RealOptions {
   profile: CapabilityProfile
   allowLive?: boolean
   spawn?: SpawnFn
-  timeoutMs?: number
 }
 
 /**
- * Real gbb transport. Default is dry-run: the argv is recorded and nothing is spawned.
+ * Real bac transport. Default is dry-run: the argv is recorded and nothing is spawned.
  * Live mode still refuses unless `allowLive` is set, and it never uses a shell.
+ * The bac binary is not implemented in this repository, so this process does not install or switch it.
  */
-export class RealGbb implements GbbAdapter {
+export class RealBac implements BacAdapter {
   readonly calls: AdapterCall[] = []
   readonly mode: 'dry-run' | 'live'
   readonly profile: CapabilityProfile
   private readonly bin: string
   private readonly allowLive: boolean
   private readonly spawnImpl: SpawnFn
-  private readonly timeoutMs: number
-
   constructor(options: RealOptions) {
     this.mode = options.mode
     this.profile = options.profile
-    this.bin = options.bin ?? 'gbb'
+    this.bin = options.bin ?? 'bac'
     this.allowLive = options.allowLive === true
-    this.timeoutMs = options.timeoutMs ?? 5_000
     this.spawnImpl = options.spawn ?? defaultSpawn
-    assertGbbBin(this.bin)
+    assertBacBin(this.bin)
   }
 
   launch(args: string[]): Promise<AdapterResult> {
-    const kind = kindOf(args)
-    if (isAgentKind(kind) && !this.profile.launchKinds.includes(kind)) {
-      this.calls.push({ op: 'launch', argv: args })
-      return Promise.resolve({
-        outcome: 'blocked',
-        code: 'capability',
-        requirement: `gbb.launch.kind=${kind}`,
-        argv: args,
-      })
+    const refused = refuseKind(args)
+    if (refused) {
+      this.calls.push({ op: 'launch', argv: [...args] })
+      return Promise.resolve(refused)
     }
     return this.run('launch', args)
   }
@@ -74,11 +66,33 @@ export class RealGbb implements GbbAdapter {
   private async run(op: AdapterCall['op'], args: string[]): Promise<AdapterResult> {
     this.calls.push({ op, argv: [...args] })
     if (this.mode === 'dry-run') return { outcome: 'planned', argv: args, dryRun: true }
-    if (!this.allowLive) throw new UserError('live-refused', 'live gbb is off unless allowLive is set')
+    if (!this.allowLive) throw new UserError('live-refused', 'live bac is off unless allowLive is set')
     const result = await this.spawnImpl({ bin: this.bin, args, shell: false })
     if (result.timedOut || result.code === null) return { outcome: 'unknown-timeout', argv: args }
-    if (result.code !== 0) return { outcome: 'error', code: 'gbb-exit', message: `gbb exited ${result.code}`, argv: args }
+    if (result.code !== 0) return { outcome: 'error', code: 'bac-exit', message: `bac exited ${result.code}`, argv: args }
     return { outcome: 'ok', argv: args, simulated: false, body: parseJson(result.stdout) }
+  }
+}
+
+export function refuseKind(args: string[]): Extract<AdapterResult, { outcome: 'blocked' }> | undefined {
+  const kind = kindOf(args)
+  const classified = classifyLaunchKind(kind)
+  if (classified.ok) return undefined
+  if (classified.code === 'kind_required') {
+    return {
+      outcome: 'blocked',
+      code: 'kind_required',
+      message: '--kind is required (codex or grok)',
+      argv: [...args],
+    }
+  }
+  return {
+    outcome: 'blocked',
+    code: 'kind_unsupported',
+    kind: classified.kind,
+    kindSupport: classified.kindSupport,
+    message: `kind ${classified.kind} is not implemented`,
+    argv: [...args],
   }
 }
 

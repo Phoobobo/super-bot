@@ -2,13 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RealGbb } from '../src/gbb/real.js'
-import { launchArgs } from '../src/gbb/argv.js'
-import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED } from '../src/gbb/contract.js'
+import { RealBac } from '../src/bac/real.js'
+import { launchArgs } from '../src/bac/argv.js'
+import { BAC_V1 } from '../src/bac/contract.js'
 import { startHttp } from '../src/http.js'
 import { baseRequest, openRuntime } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
-import type { SpawnFn } from '../src/gbb/adapter.js'
+import type { SpawnFn } from '../src/bac/adapter.js'
 
 const opened: Runtime[] = []
 afterEach(() => {
@@ -16,12 +16,12 @@ afterEach(() => {
   opened.length = 0
 })
 
-describe('gbb adapter', () => {
+describe('bac adapter', () => {
   it('dry-run records an argv array and does not spawn', async () => {
     const spawn: SpawnFn = async () => {
       throw new Error('spawned')
     }
-    const runtime = openRuntime({ adapter: 'real', mode: 'dry-run', profile: GBB_LAUNCH_KIND_V1_SIMULATED, spawn })
+    const runtime = openRuntime({ adapter: 'real', mode: 'dry-run', profile: BAC_V1, spawn })
     opened.push(runtime)
     const created = await baseRequest(runtime, 'dry-1', { phases: ['design'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
@@ -38,25 +38,27 @@ describe('gbb adapter', () => {
   })
 
   it('live mode spawns with shell false and refuses pi on the stock profile', async () => {
-    const seen: { shell: boolean; args: string[] }[] = []
+    const seen: { shell: boolean; bin: string; args: string[] }[] = []
     const spawn: SpawnFn = async (request) => {
-      seen.push({ shell: request.shell, args: request.args })
+      seen.push({ shell: request.shell, bin: request.bin, args: request.args })
       return { code: 0, stdout: '{"ok":true}', timedOut: false }
     }
     const runtime = openRuntime({
       adapter: 'real',
       mode: 'live',
       allowLive: true,
-      profile: GBB_LAUNCH_KIND_V1_SIMULATED,
+      profile: BAC_V1,
       spawn,
     })
     opened.push(runtime)
     await baseRequest(runtime, 'live-1', { phases: ['design'] })
     expect(seen).toHaveLength(1)
     expect(seen[0]?.shell).toBe(false)
+    expect(seen[0]?.bin).toBe('bac')
     expect(Array.isArray(seen[0]?.args)).toBe(true)
+    expect(seen[0]?.args.includes('--kind')).toBe(true)
 
-    const blocked = new RealGbb({ mode: 'live', allowLive: true, profile: GBB_033, spawn })
+    const blocked = new RealBac({ mode: 'live', allowLive: true, profile: BAC_V1, spawn })
     const result = await blocked.launch(launchArgs({
       repo: '/work/example-repo',
       kind: 'pi',
@@ -65,11 +67,17 @@ describe('gbb adapter', () => {
       promptFile: '/tmp/prompt.txt',
     }))
     expect(result.outcome).toBe('blocked')
+    if (result.outcome === 'blocked') {
+      expect(result.code).toBe('kind_unsupported')
+      expect(result.kind).toBe('pi')
+      expect(result.kindSupport).toBe('rejected')
+      expect(result.argv.includes('codex')).toBe(false)
+    }
     expect(seen).toHaveLength(1)
   })
 
   it('does not call hc or herdr directly', () => {
-    const source = fs.readFileSync(new URL('../src/gbb/real.ts', import.meta.url), 'utf8')
+    const source = fs.readFileSync(new URL('../src/bac/real.ts', import.meta.url), 'utf8')
     expect(source).not.toMatch(/shell:\s*true/)
     expect(source).not.toMatch(/\bexec\(|execSync/)
     const root = fileURLToPath(new URL('../src', import.meta.url))
@@ -83,7 +91,7 @@ describe('gbb adapter', () => {
 
 describe('http', () => {
   it('serves health and a dry-run request on localhost', async () => {
-    const runtime = openRuntime({ adapter: 'real', mode: 'dry-run', profile: GBB_033 })
+    const runtime = openRuntime({ adapter: 'real', mode: 'dry-run', profile: BAC_V1 })
     opened.push(runtime)
     const http = await startHttp(runtime, 0)
     try {
@@ -104,8 +112,11 @@ describe('http', () => {
         }),
       })
       expect(response.status).toBe(200)
-      const payload = (await response.json()) as { ticket: { assignments: { block?: { requirement?: string } }[] } }
-      expect(payload.ticket.assignments[0]?.block?.requirement).toBe('gbb.launch.kind=pi')
+      const payload = (await response.json()) as {
+        ticket: { assignments: { block?: { code?: string; kindSupport?: string; requirement?: string } }[] }
+      }
+      expect(payload.ticket.assignments[0]?.block?.code).toBe('kind_unsupported')
+      expect(payload.ticket.assignments[0]?.block?.kindSupport).toBe('rejected')
     } finally {
       await http.close()
     }

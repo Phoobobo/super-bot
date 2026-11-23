@@ -15,7 +15,7 @@
 | `src/app/effects.ts` | `src/store.ts` 的 `effect` 表 + `Runtime.step` | 非幂等效果先记 `running` 再调用。重启时仍是 `running` 的，改成 `unknown`，不重发。 |
 | `src/app/store.ts` SQLite | `src/store.ts`，`node:sqlite` | 单进程锁文件。没有 dsh 的 schema 11 迁移。 |
 | `src/policy.ts` 版本化策略 | `src/preferences/` | 偏好版本可确认、可撤回。未知额度是观察，不是编出来的余额。 |
-| `src/executor/dsh.ts` | `src/gbb/fake.ts`、`src/gbb/real.ts` | 执行器是 gbb 管理的 hc 终端，不是 DSH worker session。 |
+| `src/executor/dsh.ts` | `src/bac/fake.ts`、`src/bac/real.ts` | 执行器是 bac 子命令接触的窗格，不是 DSH worker session。bac 二进制尚未实现。 |
 | `src/sources/github.ts`、`feishu.ts` | 没有 | 唯一用户来源是 Grok Bot 的 CLI/API。gbb 回调是执行器事实，不是第二个用户入口。 |
 | `src/client/` 面板 | 没有 | 不另做给人看的聊天或控制台。 |
 | `src/core/stage.ts` | 工单 `phase` 加派工 `status` | 阶段表被压成：未激活、待发、dry-run、运行、已声称、已验收、受阻、未知、跳过、取消。 |
@@ -32,10 +32,10 @@
 | `src/observe.ts` | `known` / `unknown` / `stale` / `expired`。dsh 没有这个额度观察。 |
 | `src/store.ts` | 文档、效果、回调去重。 |
 | `src/runtime.ts` | 组合根，对应 `src/app/runtime.ts`，但没有插件宿主。 |
-| `src/gbb/contract.ts` | gbb 0.3.3 的能力，以及一份标明 `simulated` 的扩展契约。 |
-| `src/gbb/argv.ts` | 只构造参数数组。 |
-| `src/gbb/fake.ts` | 测试和 demo 的适配器。 |
-| `src/gbb/real.ts` | dry-run 或 `shell: false` 的 spawn。 |
+| `src/bac/contract.ts` | 已冻结的 bac v1 消费方资料。`runtimeImplemented` 为 false。 |
+| `src/bac/argv.ts` | 只构造参数数组。argv0 是 `bac`。 |
+| `src/bac/fake.ts` | 测试和 demo 的适配器。结果标明模拟。 |
+| `src/bac/real.ts` | dry-run 或 `shell: false` 的 spawn。本仓库不安装 bac。 |
 | `src/takeover/snapshot.ts` | 接管快照。dsh 没有「把一个已有 Session 收成工单」这一条。 |
 | `src/preferences/propose.ts` | 建议、选项、影响。确认后才写版本。 |
 | `src/quota.ts` | 可替换的额度读取。默认是未配置。 |

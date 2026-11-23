@@ -31,11 +31,11 @@ sbot request --request-id <id> --text "<人的原话>" --scope "<范围>" --acce
 
 看工单：`sbot show --ticket <id>`。把 `summary` / `attention` 用你自己的话告诉人。然后 `sbot inbox ack --id <message-id>`。
 
-模拟全流程（假 gbb，不是用户机器）：`sbot demo`。
+模拟全流程（fake adapter，不是用户机器，realE2E 为 false）：`sbot demo`。
 
 接管：`sbot takeover --snapshot <file>`。文件要符合 `examples/takeover.json`。
 
-回调：把 gbb owner webhook 指到 `POST /v1/callbacks/gbb`。同一 `task_id + event + status + ts` 再来一次会被丢掉。
+回调：`POST /v1/callbacks/bac`。`source` 是 `bot-as-collie`，`version` 是整数 1。去重键是 `event_id`。bac 二进制还没实现，不要据此切现网。
 
 证据：你或人跑过检查之后，
 
@@ -57,4 +57,4 @@ sbot preference revert --version 1
 
 ## 你该怎么说
 
-短。说明现在是 dry-run、模拟，还是在等真实 gbb。若派工停在 `gbb.launch.kind=pi`，告诉人：新开 pi 需要上游 gbb 改动，现有 pane 可以走接管；替代执行器要单独确认。
+短。说明现在是 dry-run、模拟，还是在等尚未实现的 bac。若派工是 `kind_unsupported` 且 `kind_support` 为 `rejected`，告诉人：v1 不 launch pi 或 antigravity，也不会改写成 codex。已有 codex 或 grok 窗格可以走 `bac handover`。

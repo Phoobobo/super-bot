@@ -68,7 +68,7 @@ async function route(
     })
     return { status: 200, body: result.ticketId ? { ...result, ticket: runtime.view(result.ticketId) } : result }
   }
-  if (method === 'POST' && pathname === '/v1/callbacks/gbb') {
+  if (method === 'POST' && pathname === '/v1/callbacks/bac') {
     return { status: 200, body: await runtime.callback(body as unknown as Parameters<Runtime['callback']>[0]) }
   }
   if (method === 'POST' && pathname === '/v1/takeover') {

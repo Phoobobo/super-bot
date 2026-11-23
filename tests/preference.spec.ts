@@ -3,7 +3,7 @@ import { planAssignment } from '../src/core/plan.js'
 import { defaultWeights } from '../src/preferences/defaults.js'
 import { fixedQuota } from '../src/quota.js'
 import { initialPreference } from '../src/preferences/defaults.js'
-import { GBB_LAUNCH_KIND_V1_SIMULATED } from '../src/gbb/contract.js'
+import { BAC_V1 } from '../src/bac/contract.js'
 import { baseRequest, clockAt, openRuntime, stock } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
 
@@ -18,7 +18,7 @@ describe('preferences', () => {
     const runtime = openRuntime({ profile: stock })
     opened.push(runtime)
     const before = await baseRequest(runtime, 'p1', { phases: ['execute'] })
-    expect(runtime.view(before.ticketId ?? '').assignments[0]?.block?.code).toBe('capability')
+    expect(runtime.view(before.ticketId ?? '').assignments[0]?.block?.code).toBe('kind_unsupported')
     const proposal = runtime.propose({ executeSubstitutes: ['codex'], intensity: 'high', budget: 3 })
     expect(proposal.recommendation.length).toBeGreaterThan(10)
     expect(proposal.options.some((option) => option.id === 'safer')).toBe(true)
@@ -27,12 +27,12 @@ describe('preferences', () => {
     expect(saved.intensity).toBe('normal')
     const after = await baseRequest(runtime, 'p2', { phases: ['execute'] })
     const assignment = runtime.view(after.ticketId ?? '').assignments[0]
-    expect(assignment?.plan?.kind).toBe('codex')
-    expect(assignment?.plan?.sample.selection).toBe('user-approved-substitute')
-    expect(assignment?.simulated).toBe(true)
+    expect(assignment?.plan?.kind).toBe('pi')
+    expect(assignment?.block?.code).toBe('kind_unsupported')
+    expect(assignment?.block?.kindSupport).toBe('rejected')
     runtime.revert(1)
     const reverted = await baseRequest(runtime, 'p3', { phases: ['execute'] })
-    expect(runtime.view(reverted.ticketId ?? '').assignments[0]?.block?.code).toBe('capability')
+    expect(runtime.view(reverted.ticketId ?? '').assignments[0]?.block?.code).toBe('kind_unsupported')
   })
 
   it('blocks when the local budget cannot cover the phase', async () => {
@@ -52,7 +52,7 @@ describe('preferences', () => {
       role: 'design',
       ticketId: 'tck_quota',
       preference,
-      profile: GBB_LAUNCH_KIND_V1_SIMULATED,
+      profile: BAC_V1,
       modelRaw: { status: 'unknown', source: 'hc-get-has-no-model-field', observedAt: preference.at },
       quotaRaw: {
         status: 'known',
@@ -74,7 +74,7 @@ describe('preferences', () => {
       role: 'design',
       ticketId: 'tck_unknown',
       preference,
-      profile: GBB_LAUNCH_KIND_V1_SIMULATED,
+      profile: BAC_V1,
       modelRaw: { status: 'unknown', source: 'hc-get-has-no-model-field' },
       quotaRaw: { status: 'unknown', source: 'no-quota-channel', observedAt: preference.at },
       budgetAvailable: 20,
@@ -105,7 +105,7 @@ describe('preferences', () => {
       role: 'design',
       ticketId: 'tck_seed',
       preference: fresh,
-      profile: GBB_LAUNCH_KIND_V1_SIMULATED,
+      profile: BAC_V1,
       modelRaw: { status: 'unknown', source: 'hc-get-has-no-model-field', observedAt: preference.at },
       quotaRaw: quota,
       budgetAvailable: 20,
@@ -115,7 +115,7 @@ describe('preferences', () => {
       role: 'design',
       ticketId: 'tck_seed',
       preference: fresh,
-      profile: GBB_LAUNCH_KIND_V1_SIMULATED,
+      profile: BAC_V1,
       modelRaw: { status: 'unknown', source: 'hc-get-has-no-model-field', observedAt: preference.at },
       quotaRaw: quota,
       budgetAvailable: 20,

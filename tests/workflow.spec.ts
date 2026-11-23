@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Assignment, GbbEvent } from '../src/core/model.js'
+import type { Assignment } from '../src/core/model.js'
+import { defaultWeights } from '../src/preferences/defaults.js'
+import { doneEvent } from './bac-event.js'
 import { baseRequest, openRuntime, stock } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
 
@@ -14,15 +16,14 @@ function use(runtime: Runtime): Runtime {
   return runtime
 }
 
-function done(assignment: Assignment, eventId: string): GbbEvent {
-  return {
-    event: 'agent_status',
-    event_id: eventId,
-    task_id: assignment.gbbTaskId,
-    status: 'done',
-    ts: '2026-01-01T00:00:00.000Z',
-    owner: 'grok-bot',
-  }
+function done(assignment: Assignment, eventId: string) {
+  return doneEvent(assignment.gbbTaskId, eventId)
+}
+
+function allowCodexExecute(runtime: Runtime) {
+  runtime.confirm(runtime.propose({
+    weights: { ...defaultWeights(), execute: [{ kind: 'codex', weight: 100 }] },
+  }).id, 'apply')
 }
 
 async function prove(
@@ -38,6 +39,7 @@ async function prove(
 describe('pstack workflows', () => {
   it('runs feature steps in order and keeps a single writer', async () => {
     const runtime = use(openRuntime())
+    allowCodexExecute(runtime)
     const created = await baseRequest(runtime, 'feature-1', { workflow: 'feature' })
     const view = runtime.view(created.ticketId ?? '')
     expect(view.assignments.map((item) => item.stepId)).toEqual(['trace', 'implement', 'verify'])
@@ -85,6 +87,7 @@ describe('pstack workflows', () => {
 
   it('rejects a stale head and stops after the rework limit', async () => {
     const runtime = use(openRuntime())
+    allowCodexExecute(runtime)
     runtime.confirm(runtime.propose({ workflow: { maxReworkRounds: 1 } }).id, 'apply')
     const created = await baseRequest(runtime, 'rework-1', { workflow: 'feature' })
     let view = runtime.view(created.ticketId ?? '')
@@ -159,11 +162,13 @@ describe('pstack workflows', () => {
     await prove(runtime, reproduce, { head: 'aaa', command: 'npm test -- repro', output: 'FAIL the case' })
     const fix = runtime.view(created.ticketId ?? '').assignments.find((item) => item.stepId === 'fix')
     expect(fix?.status).toBe('blocked')
-    expect(fix?.block?.code).toBe('capability')
+    expect(fix?.block?.code).toBe('kind_unsupported')
+    expect(fix?.block?.kindSupport).toBe('rejected')
     expect(fix?.plan?.kind).toBe('pi')
     expect(runtime.adapter.calls.some((call) => call.op === 'launch' && call.argv.includes('pi'))).toBe(false)
 
     const sim = use(openRuntime())
+    allowCodexExecute(sim)
     const ok = await baseRequest(sim, 'bug-2', { workflow: 'bugfix' })
     let view = sim.view(ok.ticketId ?? '')
     await prove(sim, view.assignments[0] as Assignment, { head: 'aaa', command: 'npm test -- repro', output: 'FAIL the case' })

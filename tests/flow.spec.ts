@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { runDemos } from '../src/demo.js'
 import { callbackDedupeKey } from '../src/core/engine.js'
-import type { GbbEvent } from '../src/core/model.js'
+import { doneEvent } from './bac-event.js'
 import { baseRequest, openRuntime, stock } from './helpers.js'
 import type { Runtime } from '../src/runtime.js'
 
@@ -29,15 +29,7 @@ describe('new request through evidence', () => {
     const view = runtime.view(created.ticketId ?? '')
     const assignment = view.assignments[0]
     expect(assignment?.status).toBe('running')
-    const event: GbbEvent = {
-      event: 'agent_status',
-      event_id: 'evt-1',
-      task_id: assignment?.gbbTaskId,
-      status: 'done',
-      ts: '2026-01-01T00:00:00.000Z',
-      owner: 'grok-bot',
-      claim: '我做完了',
-    }
+    const event = doneEvent(assignment?.gbbTaskId, 'evt-1')
     await runtime.callback(event)
     expect(runtime.view(created.ticketId ?? '').assignments[0]?.status).toBe('claimed')
     const agent = await runtime.evidence(assignment?.id ?? '', 'agent', [{ id: 'role:design', ok: true }, { id: 'tests', ok: true }])
@@ -55,19 +47,13 @@ describe('new request through evidence', () => {
     const runtime = use(openRuntime())
     const created = await baseRequest(runtime, 'dup-1', { phases: ['design'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
-    const event: GbbEvent = {
-      event: 'agent_status',
-      task_id: assignment?.gbbTaskId,
-      status: 'done',
-      ts: '2026-01-01T00:00:00.000Z',
-      owner: 'grok-bot',
-      route: 'owner',
-    }
+    const event = doneEvent(assignment?.gbbTaskId, 'dup-1')
     const first = await runtime.callback(event)
     const second = await runtime.callback({ ...event, route: 'fallback' })
     expect(first.duplicate).toBe(false)
     expect(second.duplicate).toBe(true)
-    expect(callbackDedupeKey(event)).toBe(callbackDedupeKey({ ...event, route: 'extra' }))
+    expect(callbackDedupeKey(event)).toBe(callbackDedupeKey({ event_id: event.event_id }))
+    expect(event.route).not.toBe('extra')
     expect(runtime.view(created.ticketId ?? '').assignments[0]?.claim?.eventKey).toBe(callbackDedupeKey(event))
   })
 
@@ -98,8 +84,9 @@ describe('stock gbb limits', () => {
     const created = await baseRequest(runtime, 'cap-1', { phases: ['execute'] })
     const assignment = runtime.view(created.ticketId ?? '').assignments[0]
     expect(assignment?.status).toBe('blocked')
-    expect(assignment?.block?.code).toBe('capability')
-    expect(assignment?.block?.requirement).toBe('gbb.launch.kind=pi')
+    expect(assignment?.block?.code).toBe('kind_unsupported')
+    expect(assignment?.block?.kindSupport).toBe('rejected')
+    expect(assignment?.plan?.kind).toBe('pi')
     expect(runtime.adapter.calls.some((call) => call.op === 'launch')).toBe(false)
   })
 })

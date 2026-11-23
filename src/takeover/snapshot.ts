@@ -5,7 +5,7 @@ import type { RawObservation } from '../observe.js'
 
 export interface TakeoverSnapshot {
   schema: 'superbot.takeover.v1'
-  source: { adapter: 'gbb'; command: string; observedAt: string }
+  source: { adapter: 'bac'; command: string; observedAt: string }
   identity: {
     paneId: string
     taskId?: string
@@ -43,7 +43,7 @@ export interface ListRow {
 /** A gbb list/report row is never a takeover. Stale and mismatched labels are recorded, not followed. */
 export function trustListRow(row: ListRow): { trusted: false; reason: string } {
   if (row.stale === true) return { trusted: false, reason: 'stale' }
-  const label = row.labels?.gbb_task
+  const label = row.labels?.bac_task
   if (label && row.task_id && label !== row.task_id) return { trusted: false, reason: 'label-mismatch' }
   return { trusted: false, reason: 'list-row-is-not-a-takeover' }
 }
@@ -59,8 +59,8 @@ export function validateSnapshot(input: unknown): string[] {
   if (!input || typeof input !== 'object') return ['快照不是对象']
   const snap = input as Partial<TakeoverSnapshot>
   if (snap.schema !== 'superbot.takeover.v1') errors.push('schema 必须是 superbot.takeover.v1')
-  if (!snap.source?.observedAt || snap.source.adapter !== 'gbb' || !snap.source.command) {
-    errors.push('缺少 source.adapter=gbb、command、observedAt')
+  if (!snap.source?.observedAt || snap.source.adapter !== 'bac' || !snap.source.command) {
+    errors.push('缺少 source.adapter=bac、command、observedAt')
   }
   const idn = snap.identity
   if (!idn?.paneId) errors.push('缺少 identity.paneId')

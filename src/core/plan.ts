@@ -1,5 +1,5 @@
-import type { CapabilityProfile } from '../gbb/contract.js'
-import { launchRequirement } from '../gbb/contract.js'
+import type { CapabilityProfile } from '../bac/contract.js'
+import { classifyLaunchKind } from '../bac/contract.js'
 import { mulberry32, seedUint } from './ids.js'
 import type {
   AgentKind,
@@ -103,32 +103,45 @@ export function planAssignment(input: PlanInput): PlanRecord {
         kind: input.boundKind,
         model,
         quota,
-        block: { code: 'capability', requirement: 'gbb.send', detail: '当前 gbb 资料没有 send' },
+        block: { code: 'capability', requirement: 'bac.send', detail: '当前 bac 资料没有 send' },
         sample: { seed, roll: 0, considered: [], excluded, selection: 'none' },
       })
     }
     return finish(input, input.boundKind, 'bound-pane', [], [], 0, seed, model, quota, cost)
   }
 
-  if (input.role === 'execute' && !input.profile.launchKinds.includes('pi')) {
-    excluded.push({ kind: 'pi', reason: 'capability' })
-    const substitute = input.preference.executeSubstitutes.find(
-      (kind) => input.profile.launchKinds.includes(kind) && input.preference.authorizedKinds.includes(kind),
+  if (input.role === 'execute') {
+    const positive = input.preference.weights.execute.filter(
+      (item) => item.weight > 0 && input.preference.authorizedKinds.includes(item.kind),
     )
-    if (!substitute) {
+    if (positive.length === 0) {
       return blocked(input, {
-        kind: 'pi',
         model,
         quota,
-        block: {
-          code: 'capability',
-          requirement: launchRequirement('pi'),
-          detail: 'gbb 0.3.3 不能 launch --kind pi。没有已确认的替代，不会改派 codex。',
-        },
+        block: { code: 'no-candidate', detail: '执行阶段没有已授权的候选' },
         sample: { seed, roll: 0, considered: [], excluded, selection: 'none' },
       })
     }
-    return finish(input, substitute, 'user-approved-substitute', [], excluded, 0, seed, model, quota, cost)
+    const picked = sample(positive, rng)
+    const classified = classifyLaunchKind(picked.item.kind)
+    if (!classified.ok) {
+      excluded.push({ kind: picked.item.kind, reason: classified.code })
+      return blocked(input, {
+        kind: picked.item.kind,
+        model,
+        quota,
+        block: {
+          code: classified.code,
+          kind: classified.code === 'kind_unsupported' ? classified.kind : undefined,
+          kindSupport: classified.code === 'kind_unsupported' ? classified.kindSupport : undefined,
+          detail: classified.code === 'kind_required'
+            ? '--kind is required (codex or grok)'
+            : `kind ${picked.item.kind} is not implemented`,
+        },
+        sample: { seed, roll: picked.roll, considered: positive, excluded, selection: 'none' },
+      })
+    }
+    return finish(input, classified.kind, 'primary', positive, excluded, picked.roll, seed, model, quota, cost)
   }
 
   const considered: Weight[] = []
@@ -136,6 +149,10 @@ export function planAssignment(input: PlanInput): PlanRecord {
   for (const item of input.preference.weights[input.role]) {
     if (!input.preference.authorizedKinds.includes(item.kind)) {
       excluded.push({ kind: item.kind, reason: 'not-authorized' })
+      continue
+    }
+    if (item.kind !== 'codex' && item.kind !== 'grok') {
+      excluded.push({ kind: item.kind, reason: 'kind_unsupported' })
       continue
     }
     if (!input.profile.launchKinds.includes(item.kind)) {

@@ -1,11 +1,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED, type CapabilityProfile } from '../src/gbb/contract.js'
+import { BAC_V1, type CapabilityProfile } from '../src/bac/contract.js'
 import { Runtime, type Clock } from '../src/runtime.js'
-import type { FakeScript } from '../src/gbb/fake.js'
+import type { FakeScript } from '../src/bac/fake.js'
 import type { QuotaProvider } from '../src/quota.js'
-import type { SpawnFn } from '../src/gbb/adapter.js'
+import type { SpawnFn } from '../src/bac/adapter.js'
 import type { BotTarget } from '../src/delivery.js'
 import type { RawObservation } from '../src/observe.js'
 
@@ -42,7 +42,7 @@ export function openRuntime(options: {
 } = {}): Runtime {
   return new Runtime({
     dir: options.dir ?? tempDir(),
-    profile: options.profile ?? GBB_LAUNCH_KIND_V1_SIMULATED,
+    profile: options.profile ?? BAC_V1,
     adapter: options.adapter ?? 'fake',
     mode: options.mode,
     allowLive: options.allowLive,
@@ -58,8 +58,8 @@ export function openRuntime(options: {
   })
 }
 
-export const stock = GBB_033
-export const simulated = GBB_LAUNCH_KIND_V1_SIMULATED
+export const stock = BAC_V1
+export const simulated = BAC_V1
 
 export async function baseRequest(runtime: Runtime, requestId = 'req-1', extra: Partial<Parameters<Runtime['request']>[0]> = {}) {
   return runtime.request({

@@ -7,7 +7,7 @@
  *   SUPERBOT_MAC_E2E=1 SUPERBOT_MAC_LIVE=1 node scripts/mac-e2e.mjs
  *
  * Live takeover uses SUPERBOT_TEST_PANE as the opaque id hc printed.
- * A name prefix is not an id. The script never runs hc ls or gbb list.
+ * A name prefix is not an id. The script never runs hc ls or bac list.
  */
 import { spawn } from 'node:child_process'
 import http from 'node:http'
@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 import { liveTakeoverPane, observeAcceptance } from '../dist/mac/harness-policy.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -86,7 +87,7 @@ const report = {
   requestId,
   state,
   steps: [],
-  note: 'dry-run records argv only. A script-injected callback is not a gbb callback.',
+  note: 'dry-run records argv only. A script-injected callback is not a bac callback and is not E2E.',
 }
 try {
   const created = await postJson(`${url}/v1/requests`, {
@@ -124,14 +125,7 @@ try {
     })
     if (assignment?.gbbTaskId) {
       scriptInjectedCallback = true
-      const callback = await postJson(`${url}/v1/callbacks/gbb`, {
-        event: 'agent_status',
-        event_id: `${requestId}-script`,
-        task_id: assignment.gbbTaskId,
-        status: 'done',
-        ts: new Date().toISOString(),
-        owner: 'grok-bot',
-      })
+      const callback = await postJson(`${url}/v1/callbacks/bac`, scriptCallback(assignment.gbbTaskId))
       callbackRejected = callback.rejected ?? null
       const evidence = await postJson(`${url}/v1/evidence`, {
         assignmentId: assignment.id,
@@ -193,7 +187,7 @@ process.exit(report.ok ? 0 : 1)
 function macSnapshot(paneId) {
   return {
     schema: 'superbot.takeover.v1',
-    source: { adapter: 'gbb', command: 'status', observedAt: new Date().toISOString() },
+    source: { adapter: 'bac', command: 'status', observedAt: new Date().toISOString() },
     identity: {
       paneId,
       taskId: `${paneId}-task`,
@@ -218,6 +212,32 @@ function macSnapshot(paneId) {
     acceptancePath: 'mac e2e harness',
     repo: '/tmp/sbot-mac-repo',
     channel: 'grok-bot',
+  }
+}
+
+function scriptCallback(taskId) {
+  const paneId = 't9'
+  const event = 'agent_status'
+  const status = 'done'
+  const generation = 1
+  const eventId = createHash('sha256')
+    .update(`bac.callback.v1\n${paneId}\n${event}\n${status}\n${generation}`, 'utf8')
+    .digest('hex')
+  return {
+    version: 1,
+    source: 'bot-as-collie',
+    event_id: eventId,
+    generation,
+    attempt: 1,
+    event,
+    status,
+    owner: 'grok-bot',
+    route: 'owner',
+    ts: '2026-11-23T00:00:00Z',
+    task_id: taskId,
+    pane_id: paneId,
+    backend: 'hc',
+    agent_kind: 'codex',
   }
 }
 
