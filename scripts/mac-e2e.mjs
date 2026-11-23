@@ -6,7 +6,8 @@
  *   SUPERBOT_MAC_E2E=1 node scripts/mac-e2e.mjs
  *   SUPERBOT_MAC_E2E=1 SUPERBOT_MAC_LIVE=1 node scripts/mac-e2e.mjs
  *
- * Live still refuses a takeover pane unless SUPERBOT_TEST_PANE starts with sbot-mac-.
+ * Live takeover uses SUPERBOT_TEST_PANE as the opaque id hc printed.
+ * A name prefix is not an id. The script never runs hc ls or gbb list.
  */
 import { spawn } from 'node:child_process'
 import http from 'node:http'
@@ -14,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { liveTakeoverPane, observeAcceptance } from '../dist/mac/harness-policy.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cli = path.join(root, 'dist', 'cli.js')
@@ -43,7 +45,7 @@ const bot = http.createServer((req, res) => {
       res.end()
       return
     }
-    received.push({ id: body.id, header: id, purpose: body.purpose })
+    received.push({ id: body.id, header: id, purpose: body.purpose, ticketId: body.ticketId ?? null })
     res.writeHead(204)
     res.end()
   })
@@ -78,7 +80,14 @@ const url = await new Promise((resolve, reject) => {
   })
 })
 
-const report = { realE2E: false, mode: live ? 'live' : 'dry-run', requestId, state, steps: [] }
+const report = {
+  realE2E: false,
+  mode: live ? 'live' : 'dry-run',
+  requestId,
+  state,
+  steps: [],
+  note: 'dry-run records argv only. A script-injected callback is not a gbb callback.',
+}
 try {
   const created = await postJson(`${url}/v1/requests`, {
     requestId,
@@ -87,37 +96,86 @@ try {
     acceptance: ['tests'],
     phases: ['design'],
   })
-  report.steps.push({ name: 'new-request', ticketId: created.ticketId ?? null, assignment: created.ticket?.assignments?.[0]?.status ?? null })
-  const takeoverPane = live ? process.env.SUPERBOT_TEST_PANE : 'sbot-mac-test-pane'
-  if (live && (!takeoverPane || !takeoverPane.startsWith('sbot-mac-'))) {
-    report.steps.push({ name: 'takeover', skipped: 'live takeover requires SUPERBOT_TEST_PANE starting with sbot-mac-' })
-  } else {
-    const takeover = await postJson(`${url}/v1/takeover`, macSnapshot(takeoverPane))
+  const ticketId = created.ticketId ?? null
+  let assignment = created.ticket?.assignments?.[0] ?? null
+  report.steps.push({
+    name: 'new-request',
+    ticketId,
+    assignment: assignment?.status ?? null,
+    observedLaunch: assignment?.status === 'running',
+  })
+  if (live && ticketId) {
+    const waited = await waitForLeavePlanned(url, ticketId)
+    assignment = waited.assignment
+    report.steps.push({ name: 'live-wait', assignment: assignment?.status ?? null, polls: waited.polls })
+  }
+  let scriptInjectedCallback = false
+  if (!live) {
+    const pane = liveTakeoverPane('term-fixture')
+    const takeover = await postJson(`${url}/v1/takeover`, macSnapshot(pane.paneId))
     report.steps.push({
       name: 'takeover',
+      fixturePane: true,
+      pane: pane.paneId,
       ticketId: takeover.ticketId ?? null,
-      pane: takeoverPane,
       handover: takeover.ticket?.ticket?.handover ?? null,
     })
+    if (assignment?.gbbTaskId) {
+      scriptInjectedCallback = true
+      await postJson(`${url}/v1/callbacks/gbb`, {
+        event: 'agent_status',
+        event_id: `${requestId}-script`,
+        task_id: assignment.gbbTaskId,
+        status: 'done',
+        ts: new Date().toISOString(),
+        owner: 'grok-bot',
+      })
+      await postJson(`${url}/v1/evidence`, {
+        assignmentId: assignment.id,
+        producer: 'harness',
+        checks: [{ id: 'role:design', ok: true }, { id: 'tests', ok: true }],
+      })
+    }
+  } else {
+    const pane = liveTakeoverPane(process.env.SUPERBOT_TEST_PANE)
+    if (!pane.ok) {
+      report.steps.push({ name: 'takeover', skipped: pane.reason })
+    } else {
+      const takeover = await postJson(`${url}/v1/takeover`, macSnapshot(pane.paneId))
+      const bound = takeover.ticket?.ticket?.boundPane?.paneId ?? null
+      report.steps.push({
+        name: 'takeover',
+        fixturePane: false,
+        pane: pane.paneId,
+        boundPane: bound,
+        unchanged: bound === pane.paneId,
+        handover: takeover.ticket?.ticket?.handover ?? null,
+      })
+    }
   }
-  const assignment = created.ticket?.assignments?.[0]
-  if (assignment?.gbbTaskId && !live) {
-    await postJson(`${url}/v1/callbacks/gbb`, {
-      event: 'agent_status',
-      event_id: `${requestId}-done`,
-      task_id: assignment.gbbTaskId,
-      status: 'done',
-      ts: new Date().toISOString(),
-      owner: 'grok-bot',
-    })
-    await postJson(`${url}/v1/evidence`, {
-      assignmentId: assignment.id,
-      producer: 'harness',
-      checks: [{ id: 'role:design', ok: true }, { id: 'tests', ok: true }],
-    })
-  }
-  report.steps.push({ name: 'bot-delivery', received: received.length, ids: received.map((item) => item.id) })
-  report.ok = received.length > 0 || !live
+  const after = ticketId ? await getJson(`${url}/v1/tickets/${encodeURIComponent(ticketId)}`) : null
+  const statusAfter = after?.assignments?.[0]?.status ?? assignment?.status ?? null
+  const claim = after?.assignments?.[0]?.claim?.status ?? null
+  const requestPurposes = received.filter((item) => item.ticketId === ticketId).map((item) => item.purpose)
+  const observation = observeAcceptance({
+    mode: live ? 'live' : 'dry-run',
+    assignmentStatus: statusAfter,
+    scriptInjectedCallback,
+    engineSawCallback: statusAfter === 'claimed' || statusAfter === 'accepted',
+    purposes: requestPurposes,
+  })
+  report.realE2E = observation.realE2E
+  report.steps.push({
+    name: 'observation',
+    assignment: statusAfter,
+    claim,
+    scriptInjectedCallback,
+    claimStoredWhilePlanned: claim === 'done' && statusAfter === 'planned',
+    summaryDelivered: observation.summaryDelivered,
+    requestPurposes,
+    ids: received.map((item) => item.id),
+  })
+  report.ok = live ? observation.realE2E : statusAfter === 'planned' || statusAfter === 'blocked'
 } finally {
   child.kill('SIGTERM')
   await new Promise((resolve) => bot.close(resolve))
@@ -164,4 +222,25 @@ async function postJson(target, body) {
     body: JSON.stringify(body),
   })
   return response.json()
+}
+
+async function getJson(target) {
+  const response = await fetch(target)
+  return response.json()
+}
+
+async function waitForLeavePlanned(base, ticketId) {
+  const budget = Number(process.env.SUPERBOT_MAC_WAIT_MS ?? 15000)
+  const step = 500
+  let polls = 0
+  let assignment = null
+  const started = Date.now()
+  while (Date.now() - started < budget) {
+    polls += 1
+    const view = await getJson(`${base}/v1/tickets/${encodeURIComponent(ticketId)}`)
+    assignment = view.assignments?.[0] ?? null
+    if (assignment && assignment.status !== 'planned' && assignment.status !== 'pending') break
+    await new Promise((resolve) => setTimeout(resolve, step))
+  }
+  return { assignment, polls }
 }

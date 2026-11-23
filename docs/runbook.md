@@ -37,5 +37,7 @@ npm pack --dry-run
 ## 还不能做
 
 - 没有在真实 hc 上接管或验收。
-- gbb 0.3.3 不能新开 pi 或 antigravity。上游最小契约在 `docs/gbb/MINIMAL-PATCH.md`。本仓库不改 gbb。
+- gbb 0.3.3 不能新开 pi 或 antigravity。Mac 只读核对是 hc 0.1.22。`docs/gbb/MINIMAL-PATCH.md` 只记这个旧缺口。
+- 通信层将改为 BotAsCollie，不保留 gbb 兼容层。契约还没到，所以命令仍是现在的 gbb 向量。见 `docs/decisions/0008-bac-boundary.md`。
+- Mac harness 的 live takeover 要操作者填入 hc 打印的 pane id。脚本不检查名字前缀，也不运行 `hc ls`。
 - 没有官方额度接口，也没有 hc 的 model 字段。
