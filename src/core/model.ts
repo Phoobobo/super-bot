@@ -244,6 +244,8 @@ export interface Evidence {
   at: string
   sufficient: boolean
   reason: string
+  /** simulation: stored for audit, never counts as execution evidence. */
+  disposition?: 'execution' | 'simulation'
   head?: string
   command?: string
   output?: string

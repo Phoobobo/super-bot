@@ -24,4 +24,4 @@ Engine 的一次命令在一个 SQLite 事务里改聚合，并插入 effect 行
 
 ## 验收
 
-回调 `done` 或 `idle` 把派工从 `running` 改为 `claimed`。`producer: agent` 的检查记下来，原因 `agent-self-report`。`producer: harness` 的检查盖住该阶段要求的 id，且回调已经是完成态，才 `accepted`。最后一阶段还要盖住工单上的验收 id。dry-run 的 `planned` 不能验收。
+回调 `done` 或 `idle` 只有派工已经是 `running` 时才写入完成 claim，并把状态改为 `claimed`。`planned`、`pending`、`held` 上的完成或失败回调返回 `not-dispatched`，不写 claim，但占用去重键。同一事件在派工后来变成 `running` 时仍是重复，不能补成成功 claim。派工之后新的 `ts` 或 `event_id` 才算这次执行的回调。`producer: agent` 的检查记下来，原因 `agent-self-report`。没派工时提交的证据 `disposition` 是 `simulation`，不参与覆盖检查。`producer: harness` 的执行证据盖住该阶段要求的 id，且回调已经是完成态，才 `accepted`。最后一阶段还要盖住工单上的验收 id。dry-run 的 `planned` 不能验收。

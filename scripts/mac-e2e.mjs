@@ -110,6 +110,8 @@ try {
     report.steps.push({ name: 'live-wait', assignment: assignment?.status ?? null, polls: waited.polls })
   }
   let scriptInjectedCallback = false
+  let callbackRejected = null
+  let evidenceDisposition = null
   if (!live) {
     const pane = liveTakeoverPane('term-fixture')
     const takeover = await postJson(`${url}/v1/takeover`, macSnapshot(pane.paneId))
@@ -122,7 +124,7 @@ try {
     })
     if (assignment?.gbbTaskId) {
       scriptInjectedCallback = true
-      await postJson(`${url}/v1/callbacks/gbb`, {
+      const callback = await postJson(`${url}/v1/callbacks/gbb`, {
         event: 'agent_status',
         event_id: `${requestId}-script`,
         task_id: assignment.gbbTaskId,
@@ -130,11 +132,13 @@ try {
         ts: new Date().toISOString(),
         owner: 'grok-bot',
       })
-      await postJson(`${url}/v1/evidence`, {
+      callbackRejected = callback.rejected ?? null
+      const evidence = await postJson(`${url}/v1/evidence`, {
         assignmentId: assignment.id,
         producer: 'harness',
         checks: [{ id: 'role:design', ok: true }, { id: 'tests', ok: true }],
       })
+      evidenceDisposition = evidence.disposition ?? null
     }
   } else {
     const pane = liveTakeoverPane(process.env.SUPERBOT_TEST_PANE)
@@ -170,6 +174,8 @@ try {
     assignment: statusAfter,
     claim,
     scriptInjectedCallback,
+    callbackRejected,
+    evidenceDisposition,
     claimStoredWhilePlanned: claim === 'done' && statusAfter === 'planned',
     summaryDelivered: observation.summaryDelivered,
     requestPurposes,

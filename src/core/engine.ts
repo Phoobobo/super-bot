@@ -265,10 +265,13 @@ export class Engine {
     return this.write(() => {
       if (this.store.seenCallback(key)) return { duplicate: true, matched: true }
       const assignment = event.task_id ? this.assignmentByTask(event.task_id) : undefined
-      this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment?.id })
-      if (!assignment) return { duplicate: false, matched: false }
+      if (!assignment) {
+        this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso() })
+        return { duplicate: false, matched: false }
+      }
       const ticket = this.ticket(assignment.ticketId)
       if (!event.owner || event.owner !== ticket.owner) {
+        this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
         return {
           duplicate: false,
           matched: false,
@@ -277,10 +280,16 @@ export class Engine {
         }
       }
       const status = event.status ?? ''
+      const completion = status === 'done' || status === 'idle' || status === 'blocked' || status === 'error'
+      if (completion && assignment.status !== 'running') {
+        this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
+        return { duplicate: false, matched: true, rejected: 'not-dispatched', assignmentId: assignment.id }
+      }
+      this.store.putCallback({ key, body: event as unknown as Record<string, unknown>, at: this.iso(), assignmentId: assignment.id })
       if (status === 'working' || status === '') return { duplicate: false, matched: true, assignmentId: assignment.id }
       assignment.claim = { status, eventKey: key, text: event.claim, at: this.iso() }
       if (status === 'done' || status === 'idle') {
-        if (assignment.status === 'running') assignment.status = 'claimed'
+        assignment.status = 'claimed'
         this.store.put('assignment', assignment.id, assignment)
         this.considerAcceptance(assignment)
       } else if (status === 'blocked' || status === 'error') {
@@ -329,6 +338,13 @@ export class Engine {
         command: fact.command,
         output: fact.output,
         verifier: fact.verifier,
+      }
+      if (!this.acceptsEvidence(assignment)) {
+        evidence.sufficient = false
+        evidence.reason = 'not-dispatched'
+        evidence.disposition = 'simulation'
+      } else {
+        evidence.disposition = 'execution'
       }
       assignment.evidenceIds.push(evidence.id)
       this.store.put('evidence', evidence.id, evidence)
@@ -1029,13 +1045,20 @@ export class Engine {
     }
   }
 
+  /** A completion claim is written only from running. Later blocked evidence can still be judged. */
+  private acceptsEvidence(assignment: Assignment): boolean {
+    if (assignment.status === 'running' || assignment.status === 'claimed') return true
+    const claim = assignment.claim?.status
+    return assignment.status === 'blocked' && (claim === 'done' || claim === 'idle')
+  }
+
   private considerAcceptance(assignment: Assignment, just?: Evidence): void {
     const ticket = this.ticket(assignment.ticketId)
     const required = this.requiredChecks(ticket, assignment)
     const evidence = assignment.evidenceIds
       .map((id) => this.store.get<Evidence>('evidence', id))
       .filter((item): item is Evidence => Boolean(item))
-    const harness = evidence.filter((item) => item.producer === 'harness')
+    const harness = evidence.filter((item) => item.producer === 'harness' && item.disposition !== 'simulation')
     const covered = required.every((id) => harness.some((item) => item.checks.some((check) => check.id === id && check.ok)))
     const failed = required.some((id) => harness.some((item) => item.checks.some((check) => check.id === id && !check.ok)))
     const claimOk = assignment.claim?.status === 'done' || assignment.claim?.status === 'idle'
@@ -1044,10 +1067,11 @@ export class Engine {
       just.reason = 'agent-self-report'
       this.store.put('evidence', just.id, just)
     }
-    if (assignment.status === 'planned') {
-      if (just) {
+    if (!this.acceptsEvidence(assignment)) {
+      if (just && just.disposition !== 'simulation') {
         just.sufficient = false
-        just.reason = 'dry-run'
+        just.reason = 'not-dispatched'
+        just.disposition = 'simulation'
         this.store.put('evidence', just.id, just)
       }
       return
@@ -1095,9 +1119,10 @@ export class Engine {
       just.reason = 'agent-self-report'
       this.store.put('evidence', just.id, just)
     }
+    if (!this.acceptsEvidence(assignment)) return
     const fact = assignment.evidenceIds
       .map((id) => this.store.get<Evidence>('evidence', id))
-      .filter((item): item is Evidence => item?.producer === 'harness')
+      .filter((item): item is Evidence => item?.producer === 'harness' && item.disposition !== 'simulation')
       .at(-1)
     if (!fact) return
     const judgment = judgeWorkflowEvidence({

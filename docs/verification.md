@@ -34,6 +34,14 @@ npm 10.9.9 在解析 vitest 4 的可选 peer 时会走到 `vitest@*`，再去取
 
 2026-11-23 上午：`npm ci` 退出码 0，151 个包，audit 四级都是 0。`npm run check` 退出码 0：9 个文件、40 个测试。`npm run demo` 退出码 0，四个场景都是 ok，`realE2E` 仍是 false。
 
-同日继续：outbox 故障测试覆盖 204 之后崩溃重放、断连、非 2xx、人工重试和 owner 隔离。投递是至少一次，接收端按稳定消息 id 去重，不是 exactly-once。Codex `account/rateLimits/read` 只解析 `usedPercent`，不生成 remaining，也不当作会话模型。`grok usage --json` 退出码 1 记为 `grok-usage-unavailable`，没有数字。`npm run check` 退出码 0：11 个文件、45 个测试。`npm audit --json` 退出码 0。当时的 Mac 脚本把 pane 前缀 `sbot-mac-` 当成 id，并把脚本自己塞入的回调和 takeover 的 summary 混在一次 dry-run 里。那次 `realE2E` 已是 false，但不能把 `planned` 或 stub 收包说成端到端。修正后 `npm run check` 退出码 0：12 个文件、47 个测试。`npm audit --json` 退出码 0。`SUPERBOT_MAC_E2E=1 node scripts/mac-e2e.mjs` 退出码 0，`realE2E` false，`observedLaunch` false，派工保持 `planned`，脚本注入的 callback 只把 claim 记成 done 而状态不变，`summaryDelivered` false。takeover 用的是夹具 id `term-fixture`，`handover` planned。live 不再要求 `sbot-mac-` 前缀；没有操作者给出的 hc pane id 就不接管。最新只读核对是 gbb 0.3.3 / hc 0.1.22。BAC 契约未到，没有新的 argv。
+同日继续：outbox 故障测试覆盖 204 之后崩溃重放、断连、非 2xx、人工重试和 owner 隔离。投递是至少一次，接收端按稳定消息 id 去重，不是 exactly-once。Codex `account/rateLimits/read` 只解析 `usedPercent`，不生成 remaining，也不当作会话模型。`grok usage --json` 退出码 1 记为 `grok-usage-unavailable`，没有数字。`npm run check` 退出码 0：11 个文件、45 个测试。`npm audit --json` 退出码 0。当时的 Mac 脚本把 pane 前缀 `sbot-mac-` 当成 id，并把脚本自己塞入的回调和 takeover 的 summary 混在一次 dry-run 里。那次 `realE2E` 已是 false，但不能把 `planned` 或 stub 收包说成端到端。修正后 `npm run check` 退出码 0：12 个文件、47 个测试。`npm audit --json` 退出码 0。`SUPERBOT_MAC_E2E=1 node scripts/mac-e2e.mjs` 退出码 0，`realE2E` false，`observedLaunch` false，派工保持 `planned`，脚本注入的 callback 只把 claim 记成 done 而状态不变，`summaryDelivered` false。takeover 用的是夹具 id `term-fixture`，`handover` planned。live 不再要求 `sbot-mac-` 前缀；没有操作者给出的 hc pane id 就不接管。最新只读核对是 gbb 0.3.3 / hc 0.1.22。BAC 可执行文件名确定为小写 `bac`，子命令契约未到，没有新的 argv。
+
+## 没派工的完成回调
+
+cc41e3e 的 dry-run 报告 `claimStoredWhilePlanned: true`：状态停在 `planned`，但 `claim.status` 被写成 `done`。验收函数对 `planned` 直接返回，所以工单没有结束，request 的 summary 也没有投出。危险在于这条成功形状的 claim 留在派工上，后续如果只看 `claim.status` 就会把它当成已经执行。
+
+Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`planned`、`pending`、`held` 上的 `done` / `idle` / `blocked` / `error` 返回 `not-dispatched`，不写 claim，并占用去重键。同一事件在后来变成 `running` 时是重复，不能补成成功。派工之后新的 `ts` 或 `event_id` 才算这次执行。没派工时提交的证据 `disposition` 是 `simulation`，不参与覆盖检查。错 owner、错 task、过期 head 仍不能验收。已经从 `running` 记下完成 claim、随后被 harness 标成 `blocked` 的步骤，仍可以判断下一条证据。这不是放行 dry-run。
+
+`npm run check` 退出码 0：13 个文件、52 个测试。`npm audit --json` 退出码 0，四级都是 0。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。fake adapter 仍会把派工走到 `running` 再收回调，汇总原文写明这是模拟路径。`SUPERBOT_MAC_E2E=1 node scripts/mac-e2e.mjs` 在重新构建 dist 之后退出码 0：`realE2E` false，派工 `planned`，`claim` null，`callbackRejected` `not-dispatched`，`evidenceDisposition` `simulation`，`claimStoredWhilePlanned` false，`summaryDelivered` false。这仍不是 Mac 上的真实执行。
 
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

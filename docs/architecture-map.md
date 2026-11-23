@@ -10,7 +10,7 @@
 | `src/core/intake.ts` `receive` | `Engine.request` / `Engine.takeover` | 同一 `requestId` 只产生一个 Trigger。已有工单的线程上，后来的话是 follow-up，不新开 Mandate。 |
 | `src/core/evals.ts` 准入与 Decision | `Engine.evaluate` | 只接受配置里的 bot 身份，强度 `explicit`。没有进程内的模型研判。主 Session 是外面的 Grok Bot。 |
 | `src/core/tickets.ts` Mandate、Subscription | `Mandate`、`Thread.subscription` | 取消会撤回 Mandate。更宽的范围要新工单，这份草稿用新的 `requestId`。 |
-| `src/core/assignments.ts` 派工与报告 | `Assignment`、`Engine.callback` | `done`/`idle` 只把状态改成 `claimed`。验收在 `Engine.evidence`。 |
+| `src/core/assignments.ts` 派工与报告 | `Assignment`、`Engine.callback` | `done`/`idle` 只有已经 `running` 才写成 `claimed`。没派工的完成回调不写 claim。验收在 `Engine.evidence`，simulation 证据不计数。 |
 | `src/core/replies.ts` + `src/app/outbox.ts` | `BotMessage` + effect `reply` | 回执先落库，再由 reply 效果标成可拉取。bot 用 `sbot inbox` 取，不另开一条到 hc 的通道。 |
 | `src/app/effects.ts` | `src/store.ts` 的 `effect` 表 + `Runtime.step` | 非幂等效果先记 `running` 再调用。重启时仍是 `running` 的，改成 `unknown`，不重发。 |
 | `src/app/store.ts` SQLite | `src/store.ts`，`node:sqlite` | 单进程锁文件。没有 dsh 的 schema 11 迁移。 |

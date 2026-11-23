@@ -24,7 +24,7 @@
 
 没有这些事实之前，不替换上面的调用：
 
-- 可执行文件名，以及取代 launch、send、handover、read、status、stop 的子命令
+- 可执行文件名已确定为小写 `bac`。取代 launch、send、handover、read、status、stop 的子命令还没有交付
 - 新任务如何指定 codex、grok、pi、antigravity
 - pane id 由谁生成、字段叫什么。hc 打出来的 id 是不透明字符串，不是 super-bot 起的名字
 - 回调 JSON、owner 隔离和去重键
