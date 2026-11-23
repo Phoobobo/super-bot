@@ -1,3 +1,4 @@
+import { defaultWeights } from './defaults.js'
 import { stableId } from '../core/ids.js'
 import type { Preference, PreferencePatch, Proposal } from '../core/model.js'
 import { COST } from '../core/model.js'
@@ -73,6 +74,44 @@ export function buildProposal(current: Preference, changes: PreferencePatch, at:
     changes,
     recommendation,
     options,
+    status: 'open',
+  }
+}
+
+export function roleRecommendation(current: Preference, at: string): Proposal {
+  const raised = defaultWeights()
+  raised.design = [
+    { kind: 'codex', weight: 74 },
+    { kind: 'grok', weight: 20 },
+    { kind: 'antigravity', weight: 6 },
+  ]
+  return {
+    id: stableId('prp', ['roles', String(current.version), at]),
+    baseVersion: current.version,
+    at,
+    changes: {},
+    recommendation:
+      '建议保持设计与验证以 codex 为主，并给 grok、antigravity 一小段抽样。执行继续只选 pi。gbb 0.3.3 不能新开 pi 或 antigravity。只有确认 substitutes-only 之后，pi 不能 launch 时才会标 user-approved-substitute，不会悄悄换成 codex。',
+    options: [
+      {
+        id: 'keep',
+        title: '保持当前角色',
+        impact: '设计与验证仍是 codex 94、grok 3、antigravity 3。执行只有 pi。',
+        patch: {},
+      },
+      {
+        id: 'more-grok',
+        title: '提高设计阶段的 grok 抽样',
+        impact: 'codex 仍是首选，权重 74。grok 20，antigravity 6。执行仍只有 pi。',
+        patch: { weights: raised },
+      },
+      {
+        id: 'substitutes-only',
+        title: '仅在 pi 不能 launch 时允许 codex',
+        impact: '确认后才会写入。派工会标 user-approved-substitute，而不是默认改派。',
+        patch: { executeSubstitutes: ['codex'] },
+      },
+    ],
     status: 'open',
   }
 }

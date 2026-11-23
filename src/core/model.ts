@@ -254,8 +254,14 @@ export interface BotMessage {
   purpose: 'acknowledgement' | 'summary' | 'attention' | 'proposal'
   text: string
   data: Record<string, unknown>
-  /** queued: outbox row exists. deliverable: bot may pull it. acked: bot took it. */
-  status: 'queued' | 'deliverable' | 'acked'
+  /**
+   * queued: outbox row exists.
+   * deliverable: pull mode, bot may GET it.
+   * delivered: push mode, the bot URL returned 2xx.
+   * failed: push attempts are exhausted.
+   * acked: bot confirmed it.
+   */
+  status: 'queued' | 'deliverable' | 'delivered' | 'failed' | 'acked'
   at: string
 }
 

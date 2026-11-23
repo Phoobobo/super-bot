@@ -1,6 +1,12 @@
 # Bot 集成
 
-Grok Bot 是用户入口。super-bot 把结果放进 inbox，由 bot 取走后再用人话回复。不要让 super-bot 自己给人发消息。
+Grok Bot 是用户入口。super-bot 不自己给人发消息。结果要么推回 Bot 配置的 URL，要么留在 inbox 等 Bot 来取。
+
+## 推回原来的 Bot
+
+设置 `SUPERBOT_BOT_URL` 后，reply 效果会 `POST` 那条消息。头里有 `x-superbot-message-id`。2xx 把状态写成 `delivered`。失败会再试，最多 3 次，然后写成 `failed`，不会当成已经送到。同一个消息 id 不会另建一条。进程在 POST 途中重启时，这条幂等效果会再投一次，Bot 应按 id 去重。
+
+没有这个 URL 时，行为仍是下面的拉模式。
 
 ## 拉模式
 

@@ -6,6 +6,8 @@ import { Runtime, type Clock } from '../src/runtime.js'
 import type { FakeScript } from '../src/gbb/fake.js'
 import type { QuotaProvider } from '../src/quota.js'
 import type { SpawnFn } from '../src/gbb/adapter.js'
+import type { BotTarget } from '../src/delivery.js'
+import type { RawObservation } from '../src/observe.js'
 
 export function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-'))
@@ -34,6 +36,8 @@ export function openRuntime(options: {
   stuckAfterMs?: number
   dir?: string
   spawn?: SpawnFn
+  bot?: BotTarget
+  model?: RawObservation<string>
 } = {}): Runtime {
   return new Runtime({
     dir: options.dir ?? tempDir(),
@@ -47,6 +51,8 @@ export function openRuntime(options: {
     autoDrain: options.autoDrain,
     stuckAfterMs: options.stuckAfterMs,
     spawn: options.spawn,
+    bot: options.bot,
+    model: options.model,
   })
 }
 

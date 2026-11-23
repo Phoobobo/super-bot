@@ -1,6 +1,6 @@
 # 建议中的 gbb 最小补丁
 
-**没有应用到任何 gbb 安装或克隆。** 目标修订是 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。
+**没有应用到任何 gbb 安装或克隆，也没有改 `Phoobobo/grokbot-bridge-herdr`。** 目标修订是 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。下面是可以交给那个仓库的最小契约。
 
 super-bot 在这个补丁落地并在真实 hc 上验证之前，继续把「新开 pi / antigravity」视为做不到。
 

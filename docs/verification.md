@@ -29,3 +29,9 @@ npm 10.9.9 在解析 vitest 4 的可选 peer 时会走到 `vitest@*`，再去取
 ## pstack 流程
 
 加入可选 feature / bugfix / verify 之后，再次删除 `node_modules` 跑 `npm ci`，退出码 0。`npm audit --json` 退出码 0，四级计数都是 0。`npm run check` 退出码 0：8 个文件、33 个测试通过。`npm run demo` 退出码 0，四个场景都是 ok，`realE2E` 仍是 false。`workflow` 场景写明 fake adapter，没有接 Cursor 子代理、arena 或 automations。
+
+## 回投与来源
+
+2026-11-23：`npm ci` 退出码 0，151 个包，audit 四级都是 0。`npm run check` 退出码 0：9 个文件、40 个测试。`npm run demo` 退出码 0，四个场景都是 ok，`realE2E` 仍是 false。
+
+新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

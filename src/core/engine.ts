@@ -4,7 +4,7 @@ import type { CapabilityProfile } from '../gbb/contract.js'
 import { handoverArgs, launchArgs, readArgs, sendArgs, statusArgs, stopArgs } from '../gbb/argv.js'
 import type { AdapterResult } from '../gbb/adapter.js'
 import type { QuotaProvider } from '../quota.js'
-import { unknownObservation } from '../observe.js'
+import { unknownObservation, type RawObservation } from '../observe.js'
 import type { TakeoverSnapshot } from '../takeover/snapshot.js'
 import { gbbTaskId, stableId } from './ids.js'
 import { UserError } from './errors.js'
@@ -47,6 +47,8 @@ export interface RequestInput {
 export interface EnginePorts {
   profile: CapabilityProfile
   quota: QuotaProvider
+  /** Operator config, never an official hc observation. */
+  modelRaw?: RawObservation<string>
   /** Prompt files for `gbb launch --prompt-file`. Send text stays a single argv element. */
   promptDir: string
   gbbBin: string
@@ -472,7 +474,7 @@ export class Engine {
   applyAdapterResult(row: EffectRow, result: AdapterResult): void {
     this.write(() => {
       if (row.kind === 'reply') {
-        this.deliverReply(row)
+        this.deliverReply(row, result)
         return
       }
       if (row.kind === 'handover') {
@@ -540,7 +542,7 @@ export class Engine {
     return this.write(() => {
       const message = this.store.get<BotMessage>('message', messageId)
       if (!message) throw new UserError('missing-message', '没有这条回执')
-      if (message.status === 'queued') throw new UserError('not-deliverable', '回执还在 outbox，尚未可投递')
+      if (message.status === 'queued' || message.status === 'failed') throw new UserError('not-deliverable', '回执还不能确认')
       message.status = 'acked'
       this.store.put('message', message.id, message)
       return message
@@ -717,7 +719,7 @@ export class Engine {
       ticketId: ticket.id,
       preference,
       profile: this.ports.profile,
-      modelRaw: ticket.modelRaw ?? unknownObservation('hc-get-has-no-model-field', this.iso()),
+      modelRaw: ticket.modelRaw ?? this.ports.modelRaw ?? unknownObservation('hc-get-has-no-model-field', this.iso()),
       quotaRaw: this.ports.quota.read(this.iso()),
       budgetAvailable: available,
       nowMs: this.now().getTime(),
@@ -757,14 +759,37 @@ export class Engine {
     })
   }
 
-  private deliverReply(row: EffectRow): void {
+  private deliverReply(row: EffectRow, result: AdapterResult): void {
     const id = String(row.payload.messageId ?? row.key)
     const message = this.store.get<BotMessage>('message', id)
+    const pushed = result.outcome === 'ok' && result.body?.delivered === true
+    if (result.outcome === 'ok' && message && (message.status === 'queued' || message.status === 'failed')) {
+      message.status = pushed ? 'delivered' : 'deliverable'
+      this.store.put('message', message.id, message)
+      row.status = 'done'
+      row.lastError = undefined
+      this.store.writeEffect(row)
+      return
+    }
+    if (result.outcome === 'ok') {
+      row.status = 'done'
+      this.store.writeEffect(row)
+      return
+    }
+    const detail = result.outcome === 'error' ? result.message : 'bot delivery failed'
+    if (row.attempts < 3) {
+      row.status = 'waiting'
+      row.due = this.now().getTime()
+      row.lastError = detail
+      this.store.writeEffect(row)
+      return
+    }
     if (message && message.status === 'queued') {
-      message.status = 'deliverable'
+      message.status = 'failed'
       this.store.put('message', message.id, message)
     }
-    row.status = 'done'
+    row.status = 'dead'
+    row.lastError = detail
     this.store.writeEffect(row)
   }
 

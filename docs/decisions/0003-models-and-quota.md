@@ -8,8 +8,9 @@
 
 这次没有读到用户 hc 会话的当前模型，也没有读到供应商剩余额度。默认观察是：
 
-- 模型来源 `hc-get-has-no-model-field`，状态 unknown。
-- 额度来源 `no-quota-channel`，状态 unknown。
+- 模型来源 `hc-get-has-no-model-field`，状态 unknown，origin unknown。
+- 额度来源 `no-quota-channel`，状态 unknown，origin unknown。
+- 操作者文件是 origin `config`。没有 origin、也不以 `observed:` / `config:` 开头的数字不会被当成可用观测。
 
 不会把某个默认模型写进 gbb 参数。gbb 自己的 `codex_args` 仍可能在真实 launch 时生效；那是 gbb 的配置，不是 super-bot 选出的模型。dry-run 的参数里没有 `-m`。
 

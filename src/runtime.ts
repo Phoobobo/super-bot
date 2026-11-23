@@ -1,15 +1,17 @@
 import path from 'node:path'
 import { Engine, type RequestInput } from './core/engine.js'
 import { UserError } from './core/errors.js'
-import type { EffectRow, Intensity, Preference, PreferencePatch, Proposal } from './core/model.js'
+import type { BotMessage, EffectRow, Intensity, Preference, PreferencePatch, Proposal } from './core/model.js'
 import { AGENT_KINDS } from './core/model.js'
 import type { AdapterResult, GbbAdapter } from './gbb/adapter.js'
 import { FakeGbb, type FakeScript } from './gbb/fake.js'
 import { RealGbb } from './gbb/real.js'
 import { GBB_033, type CapabilityProfile } from './gbb/contract.js'
 import { initialPreference } from './preferences/defaults.js'
-import { applyPatch, buildProposal, optionOf } from './preferences/propose.js'
+import { applyPatch, buildProposal, optionOf, roleRecommendation } from './preferences/propose.js'
 import { unconfiguredProvider, type QuotaProvider } from './quota.js'
+import { postBotMessage, type BotTarget } from './delivery.js'
+import { resolveObservation, unknownObservation, type RawObservation } from './observe.js'
 import { Store } from './store.js'
 import type { TakeoverSnapshot } from './takeover/snapshot.js'
 import { trustListRow, type ListRow } from './takeover/snapshot.js'
@@ -31,6 +33,10 @@ export interface RuntimeOptions {
   allowLive?: boolean
   fakeScript?: FakeScript
   quota?: QuotaProvider
+  /** When set, reply effects POST to the original bot instead of only filling the inbox. */
+  bot?: BotTarget
+  /** Operator-supplied model. Stored as config, not as an hc observation. */
+  model?: RawObservation<string>
   clock?: Clock
   autoDrain?: boolean
   stuckAfterMs?: number
@@ -46,12 +52,18 @@ export class Runtime {
   readonly profile: CapabilityProfile
   private readonly autoDrain: boolean
   private readonly stuckAfterMs: number
+  private readonly bot?: BotTarget
+  private readonly modelRaw?: RawObservation<string>
+  private readonly quotaProvider: QuotaProvider
 
   constructor(options: RuntimeOptions) {
     this.clock = options.clock ?? systemClock()
     this.profile = options.profile ?? GBB_033
     this.autoDrain = options.autoDrain !== false
     this.stuckAfterMs = options.stuckAfterMs ?? 15 * 60 * 1000
+    this.bot = options.bot
+    this.modelRaw = options.model
+    this.quotaProvider = options.quota ?? unconfiguredProvider
     this.store = new Store(options.dir)
     const kind = options.adapter ?? 'real'
     this.adapter =
@@ -67,6 +79,7 @@ export class Runtime {
     this.engine = new Engine(this.store, () => this.clock.now(), {
       profile: this.profile,
       quota: options.quota ?? unconfiguredProvider,
+      modelRaw: options.model,
       promptDir: path.join(options.dir, 'prompts'),
       gbbBin: options.gbbBin ?? 'gbb',
     })
@@ -127,6 +140,29 @@ export class Runtime {
     const opened = this.engine.resumeQueued()
     if (this.autoDrain) await this.drain()
     return opened
+  }
+
+  recommend(): Proposal {
+    return this.store.atomic(() => {
+      const proposal = roleRecommendation(this.currentPreference(), this.clock.now().toISOString())
+      this.store.put('proposal', proposal.id, proposal)
+      return proposal
+    })
+  }
+
+  facts(): {
+    realE2E: false
+    adapter: string
+    model: ReturnType<typeof resolveObservation<string>>
+    quota: ReturnType<typeof resolveObservation<import('./core/model.js').QuotaValue>>
+  } {
+    const now = this.clock.now().toISOString()
+    return {
+      realE2E: false,
+      adapter: this.adapter.mode,
+      model: resolveObservation(this.modelRaw ?? unknownObservation('hc-get-has-no-model-field', now), this.clock.ms()),
+      quota: resolveObservation(this.quotaProvider.read(now), this.clock.ms()),
+    }
   }
 
   propose(changes: PreferencePatch): Proposal {
@@ -250,12 +286,26 @@ export class Runtime {
     })
   }
 
+  private async deliverBot(row: EffectRow): Promise<AdapterResult> {
+    if (!this.bot) return { outcome: 'ok', argv: [], simulated: this.adapter.mode === 'fake' }
+    const id = String(row.payload.messageId ?? row.key)
+    const message = this.store.get<BotMessage>('message', id)
+    if (!message) return { outcome: 'ok', argv: [], simulated: false }
+    try {
+      const receipt = await postBotMessage(this.bot, message)
+      if (!receipt.ok) return { outcome: 'error', code: 'bot-http', message: `bot http ${receipt.status}`, argv: [] }
+      return { outcome: 'ok', argv: [], simulated: false, body: { delivered: true, status: receipt.status } }
+    } catch (error) {
+      return { outcome: 'error', code: 'bot-http', message: error instanceof Error ? error.message : 'bot delivery failed', argv: [] }
+    }
+  }
+
   private async step(row: EffectRow): Promise<void> {
     let result: AdapterResult
     try {
       const prepared = this.engine.prepareCall(row)
       if (!prepared) throw new Error(`nothing to call for ${row.kind}`)
-      if (prepared.op === 'reply') result = { outcome: 'ok', argv: [], simulated: this.adapter.mode === 'fake' }
+      if (prepared.op === 'reply') result = await this.deliverBot(row)
       else if (prepared.op === 'read') result = await this.adapter.read(prepared.args)
       else result = await this.adapter[prepared.op](prepared.args)
     } catch (error) {

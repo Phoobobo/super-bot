@@ -8,7 +8,25 @@ export interface QuotaProvider {
 }
 
 export function unconfiguredQuota(nowIso: string): RawObservation<QuotaValue> {
-  return { status: 'unknown', source: 'no-quota-channel', observedAt: nowIso }
+  return { status: 'unknown', origin: 'unknown', source: 'no-quota-channel', observedAt: nowIso }
+}
+
+/**
+ * Operator-supplied numbers. They stay `config` even if the file claims to be an official observation.
+ */
+export function configQuota(text: string, nowIso: string): RawObservation<QuotaValue> {
+  const parsed = JSON.parse(text) as { remaining?: unknown; limit?: unknown; observedAt?: unknown; freshUntil?: unknown }
+  if (typeof parsed.remaining !== 'number' || !Number.isFinite(parsed.remaining)) {
+    throw new Error('config quota needs a numeric remaining')
+  }
+  return {
+    status: 'known',
+    origin: 'config',
+    value: { remaining: parsed.remaining, limit: typeof parsed.limit === 'number' ? parsed.limit : undefined },
+    source: 'config:operator',
+    observedAt: typeof parsed.observedAt === 'string' ? parsed.observedAt : nowIso,
+    freshUntil: typeof parsed.freshUntil === 'string' ? parsed.freshUntil : undefined,
+  }
 }
 
 export const unconfiguredProvider: QuotaProvider = {

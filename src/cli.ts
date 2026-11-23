@@ -6,13 +6,15 @@ import { startHttp } from './http.js'
 import { GBB_033, GBB_LAUNCH_KIND_V1_SIMULATED } from './gbb/contract.js'
 import type { AgentKind, Intensity, PreferencePatch, Role, WorkflowKind } from './core/model.js'
 import { isWorkflowKind } from './workflow/protocol.js'
+import { botTargetFromEnv } from './delivery.js'
+import { configQuota, fixedQuota } from './quota.js'
 import { Runtime } from './runtime.js'
 import { parseSnapshot } from './takeover/snapshot.js'
 import type { GbbEvent } from './core/model.js'
 
 const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这里只提供 CLI 和本机 API。
 
-  sbot demo                         跑三条模拟场景（fake adapter，不是真实 gbb）
+  sbot demo                         跑四条模拟场景（fake adapter，不是真实 gbb）
   sbot capabilities                 打印当前采用的 gbb 能力资料
   sbot request --request-id ID --text TEXT --scope SCOPE --acceptance tests
                                     [--workflow feature|bugfix|verify] [--head SHA]
@@ -21,6 +23,8 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot takeover --snapshot FILE     导入接管快照。只有 pane id 会被拒绝
   sbot callback --json FILE         写入一条 gbb 回调
   sbot evidence --assignment ID --check role:execute=ok --producer harness
+  sbot preference recommend           给出角色选项。确认前不改偏好
+  sbot facts                          打印模型/额度的 observed、config 或 unknown
   sbot preference show
   sbot preference propose [--intensity low|normal|high] [--budget N] [--allow-substitute codex]
                                     [--workflow off|feature|bugfix|verify] [--max-rework N]
@@ -31,7 +35,7 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot show --ticket ID
   sbot inbox
   sbot inbox ack --id ID
-  sbot serve --port 47231
+  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn gbb，且仍不绕过 gbb
   sbot smoke                        打印本机以后的验收步骤，并只做本地 dry-run
 
 状态目录：SUPERBOT_STATE，默认 ./data/superbot
@@ -77,11 +81,17 @@ async function main(argv: string[]): Promise<number> {
 
 function open(rest: string[]): Runtime {
   const simulate = flag(rest, '--simulate')
+  const live = flag(rest, '--live')
+  if (simulate && live) throw new Error('simulate 和 live 不能一起开')
   return new Runtime({
     dir: process.env.SUPERBOT_STATE || path.join(process.cwd(), 'data', 'superbot'),
     adapter: simulate ? 'fake' : 'real',
     profile: simulate ? GBB_LAUNCH_KIND_V1_SIMULATED : GBB_033,
-    mode: 'dry-run',
+    mode: live ? 'live' : 'dry-run',
+    allowLive: live,
+    bot: botTargetFromEnv(),
+    quota: quotaFromEnv(),
+    model: modelFromEnv(),
   })
 }
 
@@ -128,6 +138,8 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
     }
     case 'preference':
       return preference(runtime, rest)
+    case 'facts':
+      return runtime.facts()
     case 'pause':
       runtime.pause()
       return { paused: true }
@@ -148,6 +160,7 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
 function preference(runtime: Runtime, rest: string[]): unknown {
   const sub = rest[0]
   if (sub === 'show') return { preference: runtime.currentPreference(), ledger: runtime.store.ledger() }
+  if (sub === 'recommend') return runtime.recommend()
   if (sub === 'propose') {
     const patch: PreferencePatch = {}
     const intensity = flagValue(rest, '--intensity')
@@ -193,6 +206,27 @@ function smoke(): number {
   ]
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0
+}
+
+function quotaFromEnv() {
+  const file = process.env.SUPERBOT_QUOTA_FILE
+  if (!file) return undefined
+  return fixedQuota(configQuota(fs.readFileSync(file, 'utf8'), new Date().toISOString()))
+}
+
+function modelFromEnv() {
+  const file = process.env.SUPERBOT_MODEL_FILE
+  if (!file) return undefined
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { model?: unknown; observedAt?: unknown; freshUntil?: unknown }
+  if (typeof parsed.model !== 'string' || !parsed.model) throw new Error('config model needs a model string')
+  return {
+    status: 'known' as const,
+    origin: 'config' as const,
+    value: parsed.model,
+    source: 'config:operator',
+    observedAt: typeof parsed.observedAt === 'string' ? parsed.observedAt : new Date().toISOString(),
+    freshUntil: typeof parsed.freshUntil === 'string' ? parsed.freshUntil : undefined,
+  }
 }
 
 function workflowFlag(value: string | undefined): WorkflowKind | undefined {

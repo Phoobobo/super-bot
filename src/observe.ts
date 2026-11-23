@@ -3,10 +3,14 @@
  * an observation time, and a freshUntil that is still ahead. Anything else
  * stays unknown, stale, or expired and must not be treated as a balance or a model id.
  */
+/** observed: a live system reported it. config: an operator file said it. unknown: we do not have it. */
+export type FactOrigin = 'observed' | 'config' | 'unknown'
+
 export interface RawObservation<T> {
   status: 'known' | 'unknown'
   value?: T
   source: string
+  origin?: FactOrigin
   observedAt?: string
   freshUntil?: string
 }
@@ -14,6 +18,7 @@ export interface RawObservation<T> {
 export interface ResolvedObservation<T> {
   status: 'known' | 'unknown' | 'stale' | 'expired'
   freshness: 'fresh' | 'unknown' | 'stale' | 'expired'
+  origin: FactOrigin
   usable: boolean
   value?: T
   source: string
@@ -25,11 +30,21 @@ export function unknownObservation(source: string, observedAt?: string): RawObse
   return { status: 'unknown', source, observedAt }
 }
 
+export function factOrigin(raw: RawObservation<unknown> | undefined): FactOrigin {
+  if (!raw) return 'unknown'
+  if (raw.origin === 'observed' || raw.origin === 'config' || raw.origin === 'unknown') return raw.origin
+  if (raw.source.startsWith('observed:')) return 'observed'
+  if (raw.source.startsWith('config:') || raw.source === 'file-fixture') return 'config'
+  return 'unknown'
+}
+
 export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs: number): ResolvedObservation<T> {
-  if (!raw || raw.status === 'unknown') {
+  const origin = factOrigin(raw)
+  if (!raw || raw.status === 'unknown' || origin === 'unknown') {
     return {
       status: 'unknown',
       freshness: 'unknown',
+      origin: 'unknown',
       usable: false,
       source: raw?.source || 'missing',
       observedAt: raw?.observedAt,
@@ -40,6 +55,7 @@ export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs:
     return {
       status: 'unknown',
       freshness: 'unknown',
+      origin,
       usable: false,
       source: raw.source || 'missing',
       observedAt: raw.observedAt,
@@ -50,6 +66,7 @@ export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs:
     return {
       status: 'stale',
       freshness: 'stale',
+      origin,
       usable: false,
       value: raw.value,
       source: raw.source,
@@ -61,6 +78,7 @@ export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs:
     return {
       status: 'expired',
       freshness: 'expired',
+      origin,
       usable: false,
       value: raw.value,
       source: raw.source,
@@ -71,6 +89,7 @@ export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs:
   return {
     status: 'known',
     freshness: 'fresh',
+    origin,
     usable: true,
     value: raw.value,
     source: raw.source,

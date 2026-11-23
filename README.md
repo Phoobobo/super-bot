@@ -4,7 +4,7 @@ Grok Bot 仍然是唯一和人说话的入口。super-bot 不另做聊天壳，�
 
 这是草稿，不是生产系统，也还没有在 Mac 上跟真实 gbb/hc 做过端到端。`dry-run` 只生成 `gbb` 参数并记下来，进程不启动，pane 不注册，上下文不读取。它不是 E2E。
 
-给原 bot 的回报是本机 inbox 拉取契约：消息先是 `queued`，reply 效果成功后才变成 `deliverable`，bot ack 之后才是 `acked`。没有向用户的 webhook 推送。模拟适配器里的成功也不能当成真实投递。
+没有 `SUPERBOT_BOT_URL` 时，给原 bot 的回报仍是本机 inbox：消息先是 `queued`，reply 效果成功后才变成 `deliverable`，bot ack 之后才是 `acked`。设置了 `SUPERBOT_BOT_URL` 之后，同一条 outbox 会 POST 回那个地址；2xx 写成 `delivered`，失败最多再试两次，然后写成 `failed`。这仍不是已经送到用户聊天里的消息，也不是 Mac 上的端到端。模拟适配器里的成功不能当成真实 gbb。
 
 ## 现在能跑
 
