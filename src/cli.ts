@@ -8,6 +8,7 @@ import type { AgentKind, Intensity, PreferencePatch, Role, WorkflowKind } from '
 import { isWorkflowKind } from './workflow/protocol.js'
 import { botTargetFromEnv } from './delivery.js'
 import { configQuota, fixedQuota } from './quota.js'
+import { probeNamedQuota } from './providers/select.js'
 import { Runtime } from './runtime.js'
 import { parseSnapshot } from './takeover/snapshot.js'
 import type { GbbEvent } from './core/model.js'
@@ -24,7 +25,7 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot callback --json FILE         写入一条 gbb 回调
   sbot evidence --assignment ID --check role:execute=ok --producer harness
   sbot preference recommend           给出角色选项。确认前不改偏好
-  sbot facts                          打印模型/额度的 observed、config 或 unknown
+  sbot facts [--probe codex|grok]    默认不探测。probe 才运行官方命令，失败记 unknown
   sbot preference show
   sbot preference propose [--intensity low|normal|high] [--budget N] [--allow-substitute codex]
                                     [--workflow off|feature|bugfix|verify] [--max-rework N]
@@ -34,7 +35,9 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot cancel --ticket ID [--reason TEXT]
   sbot show --ticket ID
   sbot inbox
+  sbot inbox --failed
   sbot inbox ack --id ID
+  sbot inbox retry --id ID          用同一个消息 id 再投一次。不是 exactly-once
   sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn gbb，且仍不绕过 gbb
   sbot smoke                        打印本机以后的验收步骤，并只做本地 dry-run
 
@@ -139,7 +142,7 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
     case 'preference':
       return preference(runtime, rest)
     case 'facts':
-      return runtime.facts()
+      return facts(runtime, rest)
     case 'pause':
       runtime.pause()
       return { paused: true }
@@ -151,9 +154,29 @@ async function dispatch(runtime: Runtime, command: string, rest: string[]): Prom
       return runtime.view(required(rest, '--ticket'))
     case 'inbox':
       if (rest[0] === 'ack') return runtime.ack(required(rest, '--id'))
+      if (rest[0] === 'retry') return runtime.retryDelivery(required(rest, '--id'))
+      if (flag(rest, '--failed')) return { messages: runtime.failedDeliveries() }
       return { messages: runtime.inbox() }
     default:
       throw new Error(`未知命令 ${command}`)
+  }
+}
+
+async function facts(runtime: Runtime, rest: string[]): Promise<unknown> {
+  const base = runtime.facts()
+  const probe = flagValue(rest, '--probe')
+  if (!probe) return { ...base, probe: null }
+  if (probe !== 'codex' && probe !== 'grok') throw new Error('probe 只能是 codex 或 grok')
+  const quota = await probeNamedQuota(probe, new Date().toISOString())
+  return {
+    ...base,
+    probe: {
+      name: probe,
+      simulated: false,
+      macReading: false,
+      quota,
+      note: '这次探测不是 hc 会话模型。usedPercent 不是剩余额度。失败时保持 unknown。',
+    },
   }
 }
 

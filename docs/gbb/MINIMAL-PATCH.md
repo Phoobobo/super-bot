@@ -26,7 +26,7 @@ case "$kind" in grok | codex | pi | antigravity) ;; *) die usage "--kind must be
 - 若已经上报，仍只在 `idle` 或 `done` 时继续，`blocked` / `error` 保持现在的拒绝。
 - 不要为了「看起来能用」去刮屏幕、也不要发明 model。
 
-这一步没有在 hc 0.1.21 上对 pi 验证过。补丁合并前，pi 是否发出 OSC 7501 仍是未知。
+2026-11-23 的 Mac 只读核对是 hc 0.1.22，不是 0.1.21。launch 仍只有 codex 和 grok，pi 与 antigravity 仍要 handover。这一步没有在 hc 0.1.22 上对 pi 验证过。补丁合并前，pi 是否发出 OSC 7501 仍是未知。
 
 ## 3. handover 允许显式 kind，仍然不填 model
 

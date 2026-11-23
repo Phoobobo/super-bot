@@ -86,11 +86,14 @@ export function resolveObservation<T>(raw: RawObservation<T> | undefined, nowMs:
       freshUntil: raw.freshUntil,
     }
   }
+  const balance = raw.value !== null && typeof raw.value === 'object' && 'remaining' in raw.value
+    ? typeof (raw.value as { remaining?: unknown }).remaining === 'number'
+    : raw.value !== undefined
   return {
     status: 'known',
     freshness: 'fresh',
     origin,
-    usable: true,
+    usable: balance,
     value: raw.value,
     source: raw.source,
     observedAt: raw.observedAt,

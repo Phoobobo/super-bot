@@ -35,6 +35,7 @@ export interface RuntimeOptions {
   quota?: QuotaProvider
   /** When set, reply effects POST to the original bot instead of only filling the inbox. */
   bot?: BotTarget
+  fetchImpl?: typeof fetch
   /** Operator-supplied model. Stored as config, not as an hc observation. */
   model?: RawObservation<string>
   clock?: Clock
@@ -53,6 +54,7 @@ export class Runtime {
   private readonly autoDrain: boolean
   private readonly stuckAfterMs: number
   private readonly bot?: BotTarget
+  private readonly fetchImpl?: typeof fetch
   private readonly modelRaw?: RawObservation<string>
   private readonly quotaProvider: QuotaProvider
 
@@ -62,6 +64,7 @@ export class Runtime {
     this.autoDrain = options.autoDrain !== false
     this.stuckAfterMs = options.stuckAfterMs ?? 15 * 60 * 1000
     this.bot = options.bot
+    this.fetchImpl = options.fetchImpl
     this.modelRaw = options.model
     this.quotaProvider = options.quota ?? unconfiguredProvider
     this.store = new Store(options.dir)
@@ -261,6 +264,16 @@ export class Runtime {
     return this.engine.ack(messageId)
   }
 
+  failedDeliveries(): ReturnType<Engine['failedDeliveries']> {
+    return this.engine.failedDeliveries()
+  }
+
+  async retryDelivery(messageId: string): Promise<ReturnType<Engine['retryDelivery']>> {
+    const message = this.engine.retryDelivery(messageId)
+    if (this.autoDrain) await this.drain()
+    return message
+  }
+
   private ensurePreference(): void {
     if (this.store.meta<number>('preference-current')) return
     const preference = initialPreference(this.clock.now().toISOString())
@@ -292,7 +305,7 @@ export class Runtime {
     const message = this.store.get<BotMessage>('message', id)
     if (!message) return { outcome: 'ok', argv: [], simulated: false }
     try {
-      const receipt = await postBotMessage(this.bot, message)
+      const receipt = await postBotMessage(this.bot, message, this.fetchImpl)
       if (!receipt.ok) return { outcome: 'error', code: 'bot-http', message: `bot http ${receipt.status}`, argv: [] }
       return { outcome: 'ok', argv: [], simulated: false, body: { delivered: true, status: receipt.status } }
     } catch (error) {

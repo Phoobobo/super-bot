@@ -37,6 +37,7 @@ export function openRuntime(options: {
   dir?: string
   spawn?: SpawnFn
   bot?: BotTarget
+  fetchImpl?: typeof fetch
   model?: RawObservation<string>
 } = {}): Runtime {
   return new Runtime({
@@ -52,6 +53,7 @@ export function openRuntime(options: {
     stuckAfterMs: options.stuckAfterMs,
     spawn: options.spawn,
     bot: options.bot,
+    fetchImpl: options.fetchImpl,
     model: options.model,
   })
 }

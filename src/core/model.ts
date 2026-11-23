@@ -40,8 +40,12 @@ export function isAgentKind(value: string | undefined): value is AgentKind {
 export const ROLES: readonly Role[] = ['design', 'verify', 'execute']
 
 export interface QuotaValue {
-  remaining: number
+  /** Official remaining units. Absent when the source only reported a percent. */
+  remaining?: number
   limit?: number
+  /** Codex account/rateLimits/read primary window. Not a balance. */
+  usedPercent?: number
+  resetsAt?: string
 }
 
 export interface Weight {

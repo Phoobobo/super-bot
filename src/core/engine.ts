@@ -549,6 +549,29 @@ export class Engine {
     })
   }
 
+  /** Re-queue one failed push. The same message id is posted again. This is not exactly-once. */
+  retryDelivery(messageId: string): BotMessage {
+    return this.write(() => {
+      const message = this.store.get<BotMessage>('message', messageId)
+      if (!message) throw new UserError('missing-message', '没有这条回执')
+      if (message.status !== 'failed') throw new UserError('not-failed', '只有失败的投递可以重试')
+      message.status = 'queued'
+      this.store.put('message', message.id, message)
+      this.store.enqueueEffect({
+        kind: 'reply',
+        key: message.id,
+        payload: { messageId: message.id },
+        idempotent: true,
+        due: this.now().getTime(),
+      })
+      return message
+    })
+  }
+
+  failedDeliveries(): BotMessage[] {
+    return this.store.list<BotMessage>('message').filter((item) => item.status === 'failed')
+  }
+
   private evaluate(thread: Thread, trigger: Trigger, input: RequestInput): { duplicate: boolean; ticketId?: string; decisionId?: string } {
     thread.queued = thread.queued.filter((id) => id !== trigger.id)
     const preference = this.preference()
