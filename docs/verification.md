@@ -48,4 +48,36 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 契约冻结提交 `ae859908ed07684997c786d1744e5f724f087259`，父提交 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。super-bot 改的是 argv、回调和接管消费方。没有实现 `bac`，没有在本机安装或切换，也没有把 fixture 或脚本注入的回调写成端到端。`acceptance.json` 的 `ran` 仍是 false。迁移后 `npm run check` 退出码 0：14 个文件、57 个测试。`npm audit --json` 的 critical/high/moderate/low 都是 0。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。执行阶段的 pi 是 `kind_unsupported` / `rejected`，没有改写成 codex。
 
+## 2026-11-24 实查
+
+`origin/main` 是 `46216429a08b0f9115cbf4542048f22bef63eeb7`（合并 PR #1）。BAC 仓库 `main` 仍是 `4211de848dc82defd57b71a067c500f79340ace7`，`bin/` 只有 `gbb`。`bin/bac` 在分支 `cursor/bac-contract-v1-a131` 的 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4`，`identity.json` 的 `runtime_implemented` 为 true，未发布。该分支最新提交是 `ca89d297`「Make the generation lock portable and stop stealing a live holder」，其上是 `3f4e3c036170` 的 flock。锁是否已能安全并发，这次没有证明，所以没有 launch。
+
+本机是 Linux `cursor` `6.12.113+` x86_64，时间 `2026-11-24T09:26:23Z`。PATH 上没有 `bac`、`gbb`、`hc`、`herdr`。把该提交的 `bin/bac` 放进 `/tmp/bac-probe-1795510000`，`HOME` 和 XDG 都指到这个临时目录后：
+
+- `bac version` 退出码 0：`{"ok":true,"version":"1.0.0","contract":"bac.v1","source":"bot-as-collie"}`
+- `bac capabilities` 退出码 0：codex/grok supported，pi/antigravity rejected
+- `bac doctor` 退出码 0：`generation_lock` 为 `mkdir`，`herdr` 空，`hc` null，原因分别是 `herdr not on PATH`、`hc not on PATH`。没有写出 registry 文件。临时目录随后删除。
+
+`node scripts/real-bac-preflight.mjs` 对同一个临时二进制退出码 0，`realE2E` false，`launched` false，缺口是 herdr、hc、`SUPERBOT_BOT_URL`，以及本命令本身不 launch。缺失二进制退出码 2。这不是端到端。
+
+## 2026-11-24 开发机安装与一次真实 launch
+
+官方安装，只写这台 Linux 开发机的 `/home/ubuntu`，没有改用户 Mac：
+
+- `https://releases.herdr.dev/app/install.sh`：Herdr app `0.1.17`，同时装入 `hc 0.1.22` 到 `~/.local/bin/herdr-core`。`herdr-app --version` 与 `hc --version` 退出码都是 0。这是官方 app 加官方 core，不是替代品。PATH 上没有名为 `herdr` 的 TUI；`bac doctor` 因此把 `herdr_tui` 标成 `herdr not on PATH`。hc 模块 `probe_ok` 为 true。
+- `https://x.ai/cli/install.sh`：Grok CLI `1.0.92` (`b06756fd6256`)。`~/.grok/auth.json` 不存在。没有读取或写入任何凭据。
+- bac 取自分支 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4` 的 `bin/bac`，放到这台机器的 `~/.local/bin/bac`。没有改 BAC 仓库。
+
+`hc server status` 退出码 0，`version` `0.1.22`，`pid` 8004。隔离会话：`hc run --json --bg --name sbot-probe -- /bin/sh -c 'echo sbot-isolated-ok; sleep 30'` 得到 `address` `t2`，`hc read` 打出 `sbot-isolated-ok`，随后 `hc kill` 与 `hc rm` 都成功，`hc ls` 为空。
+
+一次串行 `bac launch`（`BAC_STATE_DIR` 与 `BAC_CONFIG` 都在 `/tmp/sbot-real-20261124T093839Z`，`--backend hc --kind grok --task sbot-e2e-1 --owner grok-bot`）退出码 0，正文是 `ok:false`，`state:startup_blocked`，`blocked_reason:auth`，`prompt_pending:true`，`pane_id:t1`。提示没有打进窗格。当时没有 webhook 监听，所以没有回调。`bac stop sbot-e2e-1 --owner grok-bot` 退出码 0：`workspace_closed:true`，`hc terminal killed and removed`，登记表 `panes` 为空。`hc ls --all` 为空。`realE2E` 仍是 false。
+
+还缺两样，都不是“没有机器”：一个已登录的 Grok（`XAI_API_KEY` 或完成 `grok login`，本环境没有 auth 文件，也不会代签），以及 Bot 的 `SUPERBOT_BOT_URL`。没有这两样，终态回调到不了 SuperBot，也到不了用户的 Bot。
+
+## 2026-11-24 17:33 UTC 读到 10e1d2b
+
+附件 `grokbot-bridge-herdr-10e1d2b.tar.gz` 的 sha256 是 `36d70b540387a2cc7e23795d503a882407c1f825a6a9085d4544a894b3f0a180`，与清单一致。包内 HEAD 是 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202`。只在 `/tmp/bac-10e1d2b-read` 解压读取，没有改包，没有跑它的测试。
+
+`commands.json` 与仓库里钉着的 `ae859908` 副本没有差异，所以 launch、read、handover 的 argv 不改。`identity.json` 把 `runtime_implemented` 改为 true，`published` 仍是 false。`acceptance.json` 的 restart 场景是 `replay_undelivered: false`，投递描述是每个目标一次尝试、跨目标可能重复、重启不重放。消费方本来就按 `event_id` 去重，并且不会补造没收到的回调。`6e3eef3` 的 CI 单独核对为 success，不沿用 `f097330` 的结果。`realE2E` 仍是 false。没有重放 17:47 被终止的探针。
+
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

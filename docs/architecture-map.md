@@ -32,7 +32,7 @@
 | `src/observe.ts` | `known` / `unknown` / `stale` / `expired`。dsh 没有这个额度观察。 |
 | `src/store.ts` | 文档、效果、回调去重。 |
 | `src/runtime.ts` | 组合根，对应 `src/app/runtime.ts`，但没有插件宿主。 |
-| `src/bac/contract.ts` | 已冻结的 bac v1 消费方资料。`runtimeImplemented` 为 false。 |
+| `src/bac/contract.ts` | bac v1 消费方资料，钉在 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202`。`runtimeImplemented` 为 true，未发布，不是端到端。 |
 | `src/bac/argv.ts` | 只构造参数数组。argv0 是 `bac`。 |
 | `src/bac/fake.ts` | 测试和 demo 的适配器。结果标明模拟。 |
 | `src/bac/real.ts` | dry-run 或 `shell: false` 的 spawn。本仓库不安装 bac。 |
