@@ -60,4 +60,18 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 `node scripts/real-bac-preflight.mjs` 对同一个临时二进制退出码 0，`realE2E` false，`launched` false，缺口是 herdr、hc、`SUPERBOT_BOT_URL`，以及本命令本身不 launch。缺失二进制退出码 2。这不是端到端。
 
+## 2026-11-24 开发机安装与一次真实 launch
+
+官方安装，只写这台 Linux 开发机的 `/home/ubuntu`，没有改用户 Mac：
+
+- `https://releases.herdr.dev/app/install.sh`：Herdr app `0.1.17`，同时装入 `hc 0.1.22` 到 `~/.local/bin/herdr-core`。`herdr-app --version` 与 `hc --version` 退出码都是 0。这是官方 app 加官方 core，不是替代品。PATH 上没有名为 `herdr` 的 TUI；`bac doctor` 因此把 `herdr_tui` 标成 `herdr not on PATH`。hc 模块 `probe_ok` 为 true。
+- `https://x.ai/cli/install.sh`：Grok CLI `1.0.92` (`b06756fd6256`)。`~/.grok/auth.json` 不存在。没有读取或写入任何凭据。
+- bac 取自分支 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4` 的 `bin/bac`，放到这台机器的 `~/.local/bin/bac`。没有改 BAC 仓库。
+
+`hc server status` 退出码 0，`version` `0.1.22`，`pid` 8004。隔离会话：`hc run --json --bg --name sbot-probe -- /bin/sh -c 'echo sbot-isolated-ok; sleep 30'` 得到 `address` `t2`，`hc read` 打出 `sbot-isolated-ok`，随后 `hc kill` 与 `hc rm` 都成功，`hc ls` 为空。
+
+一次串行 `bac launch`（`BAC_STATE_DIR` 与 `BAC_CONFIG` 都在 `/tmp/sbot-real-20261124T093839Z`，`--backend hc --kind grok --task sbot-e2e-1 --owner grok-bot`）退出码 0，正文是 `ok:false`，`state:startup_blocked`，`blocked_reason:auth`，`prompt_pending:true`，`pane_id:t1`。提示没有打进窗格。当时没有 webhook 监听，所以没有回调。`bac stop sbot-e2e-1 --owner grok-bot` 退出码 0：`workspace_closed:true`，`hc terminal killed and removed`，登记表 `panes` 为空。`hc ls --all` 为空。`realE2E` 仍是 false。
+
+还缺两样，都不是“没有机器”：一个已登录的 Grok（`XAI_API_KEY` 或完成 `grok login`，本环境没有 auth 文件，也不会代签），以及 Bot 的 `SUPERBOT_BOT_URL`。没有这两样，终态回调到不了 SuperBot，也到不了用户的 Bot。
+
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。
