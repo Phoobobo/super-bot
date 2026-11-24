@@ -34,22 +34,23 @@ npm pack --dry-run
 
 操作者提供的额度或模型文件是 `config`，不是官方观测。文件里写成 observed 也会被记成 config。
 
-## Mac mini 隔离步骤
+## Mac mini 隔离接收端
 
-机器 `0df4e466-1b69-44c6-a3d3-6f46d4155c1e` 由参谋长操作。这里没有连上它，下面不是那台机器的运行记录。
+机器 `0df4e466-1b69-44c6-a3d3-6f46d4155c1e` 由参谋长操作。这里没有连上它，下面不是运行记录。源码包是 `26d836ae916e30c0eaf977be4c4eaae951276cd6`，tree `38a2d6b6a9f83afa5be753926b077503bb472b94`，archive sha256 `bf92fa994a4ee117bf229fbefce9825468a022cb8a8ea998a28eb6d8359ff238`。
 
-1. 状态放在新目录，例如 `/tmp/sbot-mac-state` 和 `/tmp/bac-mac-state`。不要用已经有会话的 `~/.local/state/bot-as-collie`。
-2. 官方安装仍是 `https://releases.herdr.dev/app/install.sh`。开发机上这次得到 Herdr app `0.1.17` 和 `hc 0.1.22`。Mac 上先 `hc --version` 再决定是否安装。
-3. bac 用保全包 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202` 的 `bin/bac`。argv 仍是 v1 的 `commands.json`。不要跑 `tests/run.sh`，也不要做 lock、kill、并发探针。
-4. Grok 需要本机已有登录或 `XAI_API_KEY`。没有就停。开发机上同一次 launch 停在 `startup_blocked` / `auth`，`pane_id` 是 `t1`，随后 `bac stop --owner grok-bot` 清掉了终端。
-5. `SUPERBOT_STATE=/tmp/sbot-mac-state SUPERBOT_BOT_URL=<Bot 的 URL> SUPERBOT_BAC_BIN=<bac> sbot serve --live`。bac 配置的 webhook 指到 `http://127.0.0.1:47231/v1/callbacks/bac`。
-6. 只发一次 `bac launch --backend hc --kind grok --task <id> --owner grok-bot`。然后 `bac read <id> --owner grok-bot`。完成回调必须是 bac 自己 POST 的，`task_id` 对上这次 launch。脚本注入或 fixture 不算。
-7. 结束后 `bac stop <id> --owner grok-bot`，`hc ls` 应为空。
+1. 在 Mac 上解包后 `npm ci` 再 `npm run build`。Node 要 `>=22.13`。没有运行时依赖。入口是 `node dist/cli.js`。`npm run serve` 不带 `--live`，不要用它做这次测试。不要全局安装。
+2. 四个新目录：`SUPERBOT_STATE`、`BAC_STATE_DIR`、`BAC_DATA_DIR`、`BAC_CONFIG`。不要指向已有会话。`SUPERBOT_BAC_BIN` 指向保全包 `10e1d2b` 的 `bin/bac`，文件名必须是 `bac`。已有的 Grok 登录留在原处，不复制、不打印。
+3. 启动：`SUPERBOT_STATE=<新目录> SUPERBOT_BAC_BIN=<bac> node dist/cli.js serve --port 47231 --live`。进程只听 `127.0.0.1`，并占住状态目录的锁。查询和取消都走这个进程的 HTTP，不要再开一个 CLI。
+4. 隔离的 bac 配置把 `webhook_url` 设成打印出来的 url 加上 `/v1/callbacks/bac`。不要写 `[[owners]]` 里的 `grok-bot`，否则回调先去那个地址，失败才回主 webhook。配置文件模式必须是 `600`。`SUPERBOT_TOKEN` 未设置时，`webhook_header_name` 和 `webhook_header_value` 留空。设置了才用请求头 `Authorization`，值是 `Bearer` 加该令牌。令牌不写进仓库。
+5. 默认执行阶段的权重是 `pi`，会被 `kind_unsupported` 拒绝，不会启动 Grok。先 `POST /v1/preferences/propose`，`weights.execute` 只有 `grok`，design 和 verify 仍给 `codex`，再 `POST /v1/preferences/confirm`，`option` 为 `apply`。然后 `POST /v1/requests`，`phases` 只有 `execute`，`repo` 必须是本机已有的 git 仓库。服务器自己执行 `bac launch --repo --kind grok --task --owner grok-bot --no-worktree --prompt-file`。不要在外面另发一条 launch。
+6. 关联：`GET /v1/tickets/<id>` 的 `assignments[].gbbTaskId`。bac 侧是 `BAC_STATE_DIR/managed.json` 的 `task_id`，generation 在 `event-seq.json`。收到的回调在 `seen_callback`，键是 `id:` 加 `event_id`。这次提交的 live 结果不把 stdout 里的 `pane_id` 写进 assignment。
+7. `src/bac/real.ts` 在 5 秒时杀掉 bac 子进程。assignment 变成 `unknown` 后，完成回调会被记成 `not-dispatched`。这是这个提交的限制，手册不改超时。
+8. 结束只限这次：`POST /v1/tickets/<id>/cancel`，再杀掉 `SUPERBOT_STATE/lock` 里的那个 pid。`bac stop` 不执行 `hc server stop`。只删除这四个新目录。不要用 `sbot callback --json` 或 `bac test-webhook` 充当端到端。
 
 ## 还不能做
 
 - 没有在真实 hc 上接管或验收。
 - gbb 0.3.3 不能新开 pi 或 antigravity。Mac 只读核对是 hc 0.1.22。`docs/gbb/MINIMAL-PATCH.md` 只记这个旧缺口。
-- 通信层将改为 BotAsCollie，不保留 gbb 兼容层。契约还没到，所以命令仍是现在的 gbb 向量。见 `docs/decisions/0008-bac-boundary.md`。
+- 消费方已经按 BotAsCollie v1 调用 `bac`。没有 gbb 兼容层。见 `docs/decisions/0008-bac-boundary.md`。
 - Mac harness 的 live takeover 要操作者填入 hc 打印的 pane id。脚本不检查名字前缀，也不运行 `hc ls`。
 - 没有官方额度接口，也没有 hc 的 model 字段。
