@@ -44,7 +44,7 @@ npm pack --dry-run
 4. 隔离的 bac 配置把 `webhook_url` 设成打印出来的 url 加上 `/v1/callbacks/bac`。不要写 `[[owners]]` 里的 `grok-bot`，否则回调先去那个地址，失败才回主 webhook。配置文件模式必须是 `600`。`SUPERBOT_TOKEN` 未设置时，`webhook_header_name` 和 `webhook_header_value` 留空。设置了才用请求头 `Authorization`，值是 `Bearer` 加该令牌。令牌不写进仓库。
 5. 默认执行阶段的权重是 `pi`，会被 `kind_unsupported` 拒绝，不会启动 Grok。先 `POST /v1/preferences/propose`，`weights.execute` 只有 `grok`，design 和 verify 仍给 `codex`，再 `POST /v1/preferences/confirm`，`option` 为 `apply`。然后 `POST /v1/requests`，`phases` 只有 `execute`，`repo` 必须是本机已有的 git 仓库。服务器自己执行 `bac launch --repo --kind grok --task --owner grok-bot --no-worktree --prompt-file`。不要在外面另发一条 launch。
 6. 关联：`GET /v1/tickets/<id>` 的 `assignments[].gbbTaskId`。bac 侧是 `BAC_STATE_DIR/managed.json` 的 `task_id`，generation 在 `event-seq.json`。收到的回调在 `seen_callback`，键是 `id:` 加 `event_id`。这次提交的 live 结果不把 stdout 里的 `pane_id` 写进 assignment。
-7. `src/bac/real.ts` 在 5 秒时杀掉 bac 子进程。assignment 变成 `unknown` 后，完成回调会被记成 `not-dispatched`。这是这个提交的限制，手册不改超时。
+7. `bac launch` 会等到进程自己退出。等待上限是 bac 默认成功路径：1 秒、三次最多 60 秒的 herdr agent start、两次 3 秒间隔、4 秒 settle、90 秒 ready、一次 30 秒 prompt、10 秒核对，再加 15 秒，一共 336 秒。hc 路径更短，包含在里面。超过这个上限才把 assignment 标成 `unknown`，这时完成回调仍是 `not-dispatched`。`status`、`read`、`send`、`handover`、`stop` 仍是 5 秒。重启不重放没送到的回调。
 8. 结束只限这次：`POST /v1/tickets/<id>/cancel`，再杀掉 `SUPERBOT_STATE/lock` 里的那个 pid。`bac stop` 不执行 `hc server stop`。只删除这四个新目录。不要用 `sbot callback --json` 或 `bac test-webhook` 充当端到端。
 
 ## 还不能做
