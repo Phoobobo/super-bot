@@ -4,7 +4,7 @@ Grok Bot 是用户入口。super-bot 不自己给人发消息。结果要么推�
 
 ## 推回原来的 Bot
 
-设置 `SUPERBOT_BOT_URL` 后，reply 效果会 `POST` 那条消息。头里有 `x-superbot-message-id`，正文里的 `id` 是同一个稳定 id。这是至少一次，不是 exactly-once：2xx 之后、写回 `delivered` 之前如果进程崩溃，重启会用同一个 id 再 POST。接收端必须按这个 id 去重。非 2xx 和断连都会重试，最多 3 次，然后写成 `failed`。`sbot inbox retry --id` 用同一个 id 再投，不会新建一条。
+设置 `SUPERBOT_BOT_URL` 后，reply 效果会 `POST` 那条消息。头里有 `x-superbot-message-id`，正文里的 `id` 是同一个稳定 id。这是至少一次，不是 exactly-once：2xx 之后、写回 `delivered` 之前如果进程崩溃，重启会用同一个 id 再 POST。接收端必须按这个 id 去重。BAC 侧的 journal 恢复不会重放没送到的回调；super-bot 不会把没收到的完成回调补成一次执行。非 2xx 和断连都会重试，最多 3 次，然后写成 `failed`。`sbot inbox retry --id` 用同一个 id 再投，不会新建一条。
 
 没有这个 URL 时，行为仍是下面的拉模式。
 

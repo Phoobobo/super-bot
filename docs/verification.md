@@ -74,4 +74,10 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 还缺两样，都不是“没有机器”：一个已登录的 Grok（`XAI_API_KEY` 或完成 `grok login`，本环境没有 auth 文件，也不会代签），以及 Bot 的 `SUPERBOT_BOT_URL`。没有这两样，终态回调到不了 SuperBot，也到不了用户的 Bot。
 
+## 2026-11-24 17:30 UTC 查找 10e1d2b
+
+本地与 `origin/cursor/real-bac-preflight-872c` 都是 `f09733069ede5794888022ee88b833d12d98d5bd`。`f097330` 的两条 check 已是 success。`realE2E` 仍是 false。
+
+`GET /repos/Phoobobo/grokbot-bridge-herdr/commits/10e1d2b` 返回 422，`No commit found for SHA: 10e1d2b`。该仓库可见分支头是 `main` `4211de848dc8`、`cursor/bac-contract-v1-a131` `ca89d297c1aa`、`cursor/hc-app-placement-309f` `8ea7bf821cc2`、`cursor/hc-backend-8fd4` `410b4c07b7f1`。PR 1–3 的 head 都不是这个前缀。本地保全目录里也没有 `10e1d2b`。因此没有按它改 argv。要继续兼容，需要该提交的完整 SHA，以及其上的 `contracts/bac/v1/commands.json`、`docs/bac/v1/CONTRACT.md`、`contracts/bac/v1/identity.json`。没有重放 17:47 被终止的 `tests/run.sh`、lock、kill 或并发探针。
+
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。
