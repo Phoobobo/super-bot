@@ -1,0 +1,282 @@
+#!/usr/bin/env node
+import fs from 'node:fs'
+import path from 'node:path'
+import { runDemos } from './demo.js'
+import { startHttp } from './http.js'
+import { BAC_V1 } from './bac/contract.js'
+import type { AgentKind, Intensity, PreferencePatch, Role, WorkflowKind } from './core/model.js'
+import { isWorkflowKind } from './workflow/protocol.js'
+import { botTargetFromEnv } from './delivery.js'
+import { configQuota, fixedQuota } from './quota.js'
+import { probeNamedQuota } from './providers/select.js'
+import { Runtime } from './runtime.js'
+import { parseSnapshot } from './takeover/snapshot.js'
+import type { GbbEvent } from './core/model.js'
+
+const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这里只提供 CLI 和本机 API。
+
+  sbot demo                         跑四条模拟场景（fake adapter，不是真实 bac，realE2E 为 false）
+  sbot capabilities                 打印已冻结的 bac v1 消费方资料。bac 二进制未实现
+  sbot request --request-id ID --text TEXT --scope SCOPE --acceptance tests
+                                    [--workflow feature|bugfix|verify] [--head SHA]
+                                    默认 real dry-run，不会启动代理。不写 --workflow 时沿用偏好，默认 off
+  sbot request ... --simulate       用 fake adapter。不会把 pi 改写成 codex
+  sbot takeover --snapshot FILE     导入接管快照。只有 pane id 会被拒绝
+  sbot callback --json FILE         写入一条 bac v1 回调
+  sbot evidence --assignment ID --check role:execute=ok --producer harness
+  sbot preference recommend           给出角色选项。确认前不改偏好
+  sbot facts [--probe codex|grok]    默认不探测。probe 才运行官方命令，失败记 unknown
+  sbot preference show
+  sbot preference propose [--intensity low|normal|high] [--budget N] [--allow-substitute codex]
+                                    [--workflow off|feature|bugfix|verify] [--max-rework N]
+  sbot preference confirm --proposal ID --option apply|safer|substitutes-only|keep
+  sbot preference revert --version N
+  sbot pause | sbot resume
+  sbot cancel --ticket ID [--reason TEXT]
+  sbot show --ticket ID
+  sbot inbox
+  sbot inbox --failed
+  sbot inbox ack --id ID
+  sbot inbox retry --id ID          用同一个消息 id 再投一次。不是 exactly-once
+  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn bac。本仓库不安装 bac，也不直接调用 hc
+  sbot smoke                        打印本机以后的验收步骤，并只做本地 dry-run
+
+状态目录：SUPERBOT_STATE，默认 ./data/superbot
+`
+
+async function main(argv: string[]): Promise<number> {
+  const [command, ...rest] = argv
+  if (!command || command === 'help' || command === '--help') {
+    process.stdout.write(HELP)
+    return 0
+  }
+  if (command === 'demo') {
+    const report = await runDemos()
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+    return report.scenarios.every((item) => item.ok) ? 0 : 1
+  }
+  if (command === 'smoke') return smoke()
+  if (command === 'capabilities') {
+    const profile = BAC_V1
+    process.stdout.write(`${JSON.stringify({ profile, realE2E: false, note: 'bac v1 消费方契约已冻结。bac 二进制未实现，这不是对本机的探测。' }, null, 2)}\n`)
+    return 0
+  }
+  const runtime = open(rest)
+  try {
+    if (command === 'serve') {
+      const port = Number(flagValue(rest, '--port') ?? 47231)
+      const http = await startHttp(runtime, port)
+      process.stdout.write(`${JSON.stringify({ url: http.url, health: `${http.url}/v1/health` })}\n`)
+      await new Promise(() => {})
+    }
+    const body = await dispatch(runtime, command, rest)
+    process.stdout.write(`${JSON.stringify(body, null, 2)}\n`)
+    return 0
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const code = error instanceof Error && 'code' in error ? String(error.code) : 'error'
+    process.stderr.write(`${JSON.stringify({ error: { code, message } })}\n`)
+    return 1
+  } finally {
+    if (command !== 'serve') runtime.close()
+  }
+}
+
+function open(rest: string[]): Runtime {
+  const simulate = flag(rest, '--simulate')
+  const live = flag(rest, '--live')
+  if (simulate && live) throw new Error('simulate 和 live 不能一起开')
+  return new Runtime({
+    dir: process.env.SUPERBOT_STATE || path.join(process.cwd(), 'data', 'superbot'),
+    adapter: simulate ? 'fake' : 'real',
+    profile: BAC_V1,
+    mode: live ? 'live' : 'dry-run',
+    allowLive: live,
+    bot: botTargetFromEnv(),
+    quota: quotaFromEnv(),
+    model: modelFromEnv(),
+  })
+}
+
+async function dispatch(runtime: Runtime, command: string, rest: string[]): Promise<unknown> {
+  switch (command) {
+    case 'request':
+      return runtime.request({
+        actor: 'grok-bot',
+        requestId: required(rest, '--request-id'),
+        text: required(rest, '--text'),
+        scope: required(rest, '--scope'),
+        acceptance: required(rest, '--acceptance').split(','),
+        acceptancePath: flagValue(rest, '--acceptance-path') ?? '由 Grok Bot 提交 harness 证据',
+        phases: (flagValue(rest, '--phases') ?? 'design,execute,verify').split(',') as Role[],
+        channel: 'grok-bot',
+        repo: flagValue(rest, '--repo') ?? '/work/example-repo',
+        workflow: workflowFlag(flagValue(rest, '--workflow')),
+        head: flagValue(rest, '--head'),
+      }).then((result) => (result.ticketId ? { ...result, ticket: runtime.view(result.ticketId) } : result))
+    case 'takeover':
+      return runtime.takeover(parseSnapshot(JSON.parse(fs.readFileSync(required(rest, '--snapshot'), 'utf8')))).then((result) => ({
+        ...result,
+        ticket: runtime.view(result.ticketId),
+      }))
+    case 'callback':
+      return runtime.callback(JSON.parse(fs.readFileSync(required(rest, '--json'), 'utf8')) as GbbEvent)
+    case 'evidence': {
+      const checks = rest.flatMap((arg, index) => (arg === '--check' ? [rest[index + 1] ?? ''] : []))
+      return runtime.evidence(
+        required(rest, '--assignment'),
+        flagValue(rest, '--producer') === 'agent' ? 'agent' : 'harness',
+        checks.filter(Boolean).map((item) => {
+          const [id, mark] = item.split('=')
+          return { id: id ?? item, ok: mark !== 'fail' }
+        }),
+        'grok-bot',
+        {
+          head: flagValue(rest, '--head'),
+          command: flagValue(rest, '--command'),
+          output: flagValue(rest, '--output'),
+          verifier: flagValue(rest, '--verifier'),
+        },
+      )
+    }
+    case 'preference':
+      return preference(runtime, rest)
+    case 'facts':
+      return facts(runtime, rest)
+    case 'pause':
+      runtime.pause()
+      return { paused: true }
+    case 'resume':
+      return { opened: await runtime.resume() }
+    case 'cancel':
+      return runtime.cancel(required(rest, '--ticket'), flagValue(rest, '--reason') ?? 'cancelled')
+    case 'show':
+      return runtime.view(required(rest, '--ticket'))
+    case 'inbox':
+      if (rest[0] === 'ack') return runtime.ack(required(rest, '--id'))
+      if (rest[0] === 'retry') return runtime.retryDelivery(required(rest, '--id'))
+      if (flag(rest, '--failed')) return { messages: runtime.failedDeliveries() }
+      return { messages: runtime.inbox() }
+    default:
+      throw new Error(`未知命令 ${command}`)
+  }
+}
+
+async function facts(runtime: Runtime, rest: string[]): Promise<unknown> {
+  const base = runtime.facts()
+  const probe = flagValue(rest, '--probe')
+  if (!probe) return { ...base, probe: null }
+  if (probe !== 'codex' && probe !== 'grok') throw new Error('probe 只能是 codex 或 grok')
+  const quota = await probeNamedQuota(probe, new Date().toISOString())
+  return {
+    ...base,
+    probe: {
+      name: probe,
+      simulated: false,
+      macReading: false,
+      quota,
+      note: '这次探测不是 hc 会话模型。usedPercent 不是剩余额度。失败时保持 unknown。',
+    },
+  }
+}
+
+function preference(runtime: Runtime, rest: string[]): unknown {
+  const sub = rest[0]
+  if (sub === 'show') return { preference: runtime.currentPreference(), ledger: runtime.store.ledger() }
+  if (sub === 'recommend') return runtime.recommend()
+  if (sub === 'propose') {
+    const patch: PreferencePatch = {}
+    const intensity = flagValue(rest, '--intensity')
+    if (intensity) patch.intensity = intensity as Intensity
+    const budget = flagValue(rest, '--budget')
+    if (budget) patch.budget = Number(budget)
+    const substitute = flagValue(rest, '--allow-substitute')
+    if (substitute) patch.executeSubstitutes = [substitute as AgentKind]
+    const quota = flagValue(rest, '--unknown-quota')
+    if (quota === 'block' || quota === 'mark-and-proceed') patch.unknownQuota = quota
+    const workflow = flagValue(rest, '--workflow')
+    const rounds = flagValue(rest, '--max-rework')
+    if (workflow || rounds) {
+      patch.workflow = {}
+      if (workflow === 'off' || isWorkflowKind(workflow)) patch.workflow.defaultKind = workflow
+      if (rounds) patch.workflow.maxReworkRounds = Number(rounds)
+    }
+    return runtime.propose(patch)
+  }
+  if (sub === 'confirm') return runtime.confirm(required(rest, '--proposal'), required(rest, '--option'))
+  if (sub === 'revert') return runtime.revert(Number(required(rest, '--version')))
+  throw new Error('preference show|propose|confirm|revert')
+}
+
+function smoke(): number {
+  const lines = [
+    'super-bot 本机 smoke（此脚本不会连接用户的机器，也不会调用 bac 或 hc）',
+    '',
+    'bac 二进制尚未实现。下面不是真机步骤。',
+    '1. 契约冻结在 ae859908ed07684997c786d1744e5f724f087259，父提交 bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6。',
+    '2. sbot capabilities。launchKinds 只有 grok 和 codex。runtimeImplemented 是 false。',
+    '3. sbot request --request-id smoke-1 --text "只读检查" --scope "不改仓库" --acceptance tests',
+    '   这是 dry-run。执行阶段停在 kind_unsupported，kind_support 是 rejected，不会改写成 codex。',
+    '4. 不要把 hc ls 的输出当成当前模型。模型与额度不进回调。',
+    '5. 接管只能 bac handover。pane id 拒绝 planned、pending、unknown、fake、placeholder，以及 herdr_space / herdr_tab。',
+    '6. 回调 POST /v1/callbacks/bac。source 必须是 bot-as-collie，version 必须是整数 1。去重键是 event_id。',
+    '7. realE2E 保持 false。fixture 和脚本注入的回调不是端到端。',
+    '',
+    JSON.stringify({ profile: BAC_V1.id, launchKinds: BAC_V1.launchKinds, runtimeImplemented: false, realE2E: false }),
+  ]
+  process.stdout.write(`${lines.join('\n')}\n`)
+  return 0
+}
+
+function quotaFromEnv() {
+  const file = process.env.SUPERBOT_QUOTA_FILE
+  if (!file) return undefined
+  return fixedQuota(configQuota(fs.readFileSync(file, 'utf8'), new Date().toISOString()))
+}
+
+function modelFromEnv() {
+  const file = process.env.SUPERBOT_MODEL_FILE
+  if (!file) return undefined
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { model?: unknown; observedAt?: unknown; freshUntil?: unknown }
+  if (typeof parsed.model !== 'string' || !parsed.model) throw new Error('config model needs a model string')
+  return {
+    status: 'known' as const,
+    origin: 'config' as const,
+    value: parsed.model,
+    source: 'config:operator',
+    observedAt: typeof parsed.observedAt === 'string' ? parsed.observedAt : new Date().toISOString(),
+    freshUntil: typeof parsed.freshUntil === 'string' ? parsed.freshUntil : undefined,
+  }
+}
+
+function workflowFlag(value: string | undefined): WorkflowKind | undefined {
+  if (!value) return undefined
+  if (!isWorkflowKind(value)) throw new Error('workflow 只能是 feature、bugfix、verify')
+  return value
+}
+
+function flag(argv: string[], name: string): boolean {
+  return argv.includes(name)
+}
+
+function flagValue(argv: string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
+  return index >= 0 ? argv[index + 1] : undefined
+}
+
+function required(argv: string[], name: string): string {
+  const value = flagValue(argv, name)
+  if (!value) throw new Error(`缺少 ${name}`)
+  return value
+}
+
+const entry = process.argv[1] ? path.resolve(process.argv[1]) : ''
+if (entry.endsWith(`${path.sep}cli.js`) || entry.endsWith(`${path.sep}cli.ts`)) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      process.exit(1)
+    },
+  )
+}

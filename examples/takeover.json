@@ -1,0 +1,45 @@
+{
+  "schema": "superbot.takeover.v1",
+  "source": {
+    "adapter": "bac",
+    "command": "status",
+    "observedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "identity": {
+    "paneId": "term-example",
+    "taskId": "task-example",
+    "backend": "hc",
+    "origin": "existing",
+    "owner": "grok-bot",
+    "kind": {
+      "status": "known",
+      "value": "codex",
+      "source": "operator-snapshot",
+      "observedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "model": {
+      "status": "unknown",
+      "source": "hc-get-has-no-model-field",
+      "observedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "labelsConsistent": false,
+    "labelNote": "list 标签和登记不一致，不用标签当身份"
+  },
+  "authorization": {
+    "actor": "grok-bot",
+    "scope": "只继续快照里的未完成项",
+    "allowedToContinue": true,
+    "acceptance": ["tests"]
+  },
+  "work": {
+    "done": [{ "key": "done-1", "title": "已经写过的接口" }],
+    "open": [
+      { "key": "done-1", "title": "已经写过的接口", "role": "execute" },
+      { "key": "open-1", "title": "补上剩下的分支", "role": "execute" }
+    ],
+    "unknown": [{ "note": "不清楚旧会话有没有跑过发布" }]
+  },
+  "acceptancePath": "bot 核对 diff 和测试输出后提交 harness 证据",
+  "repo": "/work/example-repo",
+  "channel": "grok-bot"
+}

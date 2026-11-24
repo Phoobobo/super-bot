@@ -1,0 +1,3 @@
+Phoobobo/grokbot-bridge-herdr ae859908ed07684997c786d1744e5f724f087259
+parent bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6
+These JSON files are the frozen consumer contract. This repository does not implement the bac binary.
