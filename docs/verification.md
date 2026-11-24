@@ -48,4 +48,16 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 契约冻结提交 `ae859908ed07684997c786d1744e5f724f087259`，父提交 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。super-bot 改的是 argv、回调和接管消费方。没有实现 `bac`，没有在本机安装或切换，也没有把 fixture 或脚本注入的回调写成端到端。`acceptance.json` 的 `ran` 仍是 false。迁移后 `npm run check` 退出码 0：14 个文件、57 个测试。`npm audit --json` 的 critical/high/moderate/low 都是 0。`npm run demo` 退出码 0，`simulated: true`，`realE2E: false`。执行阶段的 pi 是 `kind_unsupported` / `rejected`，没有改写成 codex。
 
+## 2026-11-24 实查
+
+`origin/main` 是 `46216429a08b0f9115cbf4542048f22bef63eeb7`（合并 PR #1）。BAC 仓库 `main` 仍是 `4211de848dc82defd57b71a067c500f79340ace7`，`bin/` 只有 `gbb`。`bin/bac` 在分支 `cursor/bac-contract-v1-a131` 的 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4`，`identity.json` 的 `runtime_implemented` 为 true，未发布。该分支最新提交是 `ca89d297`「Make the generation lock portable and stop stealing a live holder」，其上是 `3f4e3c036170` 的 flock。锁是否已能安全并发，这次没有证明，所以没有 launch。
+
+本机是 Linux `cursor` `6.12.113+` x86_64，时间 `2026-11-24T09:26:23Z`。PATH 上没有 `bac`、`gbb`、`hc`、`herdr`。把该提交的 `bin/bac` 放进 `/tmp/bac-probe-1795510000`，`HOME` 和 XDG 都指到这个临时目录后：
+
+- `bac version` 退出码 0：`{"ok":true,"version":"1.0.0","contract":"bac.v1","source":"bot-as-collie"}`
+- `bac capabilities` 退出码 0：codex/grok supported，pi/antigravity rejected
+- `bac doctor` 退出码 0：`generation_lock` 为 `mkdir`，`herdr` 空，`hc` null，原因分别是 `herdr not on PATH`、`hc not on PATH`。没有写出 registry 文件。临时目录随后删除。
+
+`node scripts/real-bac-preflight.mjs` 对同一个临时二进制退出码 0，`realE2E` false，`launched` false，缺口是 herdr、hc、`SUPERBOT_BOT_URL`，以及本命令本身不 launch。缺失二进制退出码 2。这不是端到端。
+
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

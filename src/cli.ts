@@ -38,7 +38,8 @@ const HELP = `sbot — super-bot 草稿。Grok Bot 是唯一用户入口，这�
   sbot inbox --failed
   sbot inbox ack --id ID
   sbot inbox retry --id ID          用同一个消息 id 再投一次。不是 exactly-once
-  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn bac。本仓库不安装 bac，也不直接调用 hc
+  sbot serve --port 47231 [--live]   默认 dry-run。--live 才会 spawn bac。可用 SUPERBOT_BAC_BIN 指向隔离副本
+  node scripts/real-bac-preflight.mjs  只读探测 bac version/doctor。不 launch，realE2E 恒为 false
   sbot smoke                        打印本机以后的验收步骤，并只做本地 dry-run
 
 状态目录：SUPERBOT_STATE，默认 ./data/superbot
@@ -92,6 +93,7 @@ function open(rest: string[]): Runtime {
     profile: BAC_V1,
     mode: live ? 'live' : 'dry-run',
     allowLive: live,
+    bacBin: process.env.SUPERBOT_BAC_BIN,
     bot: botTargetFromEnv(),
     quota: quotaFromEnv(),
     model: modelFromEnv(),
