@@ -30,7 +30,7 @@ npm pack --dry-run
 
 `sbot preference recommend` 只给出选项。确认 `substitutes-only` 只记下名单，不改写 launch kind。
 
-`sbot serve --live` 才会尝试 spawn `bac`，`shell` 为 false。不要和 `--simulate` 一起用。最近一次能读到的 bac 运行时是 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4`，不在 BAC 的 `main` 上。候选 `10e1d2b` 在 2026-11-24 这次读取里不存在。
+`sbot serve --live` 才会尝试 spawn `bac`，`shell` 为 false。不要和 `--simulate` 一起用。消费方钉在保全包 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202`。它的 `commands.json` 与 `ae859908` 相同，所以 argv 没有改。该提交未发布，也不在远端。
 
 操作者提供的额度或模型文件是 `config`，不是官方观测。文件里写成 observed 也会被记成 config。
 
@@ -40,7 +40,7 @@ npm pack --dry-run
 
 1. 状态放在新目录，例如 `/tmp/sbot-mac-state` 和 `/tmp/bac-mac-state`。不要用已经有会话的 `~/.local/state/bot-as-collie`。
 2. 官方安装仍是 `https://releases.herdr.dev/app/install.sh`。开发机上这次得到 Herdr app `0.1.17` 和 `hc 0.1.22`。Mac 上先 `hc --version` 再决定是否安装。
-3. bac 用可读到的提交 `ca89d297c1aa34dbdc367af7c5234da0f59c0ef4` 的 `bin/bac`，除非 `10e1d2b` 已经能按完整 SHA 打开。不要跑 `tests/run.sh`，也不要做 lock、kill、并发探针。
+3. bac 用保全包 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202` 的 `bin/bac`。argv 仍是 v1 的 `commands.json`。不要跑 `tests/run.sh`，也不要做 lock、kill、并发探针。
 4. Grok 需要本机已有登录或 `XAI_API_KEY`。没有就停。开发机上同一次 launch 停在 `startup_blocked` / `auth`，`pane_id` 是 `t1`，随后 `bac stop --owner grok-bot` 清掉了终端。
 5. `SUPERBOT_STATE=/tmp/sbot-mac-state SUPERBOT_BOT_URL=<Bot 的 URL> SUPERBOT_BAC_BIN=<bac> sbot serve --live`。bac 配置的 webhook 指到 `http://127.0.0.1:47231/v1/callbacks/bac`。
 6. 只发一次 `bac launch --backend hc --kind grok --task <id> --owner grok-bot`。然后 `bac read <id> --owner grok-bot`。完成回调必须是 bac 自己 POST 的，`task_id` 对上这次 launch。脚本注入或 fixture 不算。

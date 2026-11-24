@@ -215,8 +215,8 @@ function smoke(): number {
     'super-bot 本机 smoke（此脚本不会连接用户的机器，也不会调用 bac 或 hc）',
     '',
     'bac 二进制尚未实现。下面不是真机步骤。',
-    '1. 契约冻结在 ae859908ed07684997c786d1744e5f724f087259，父提交 bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6。',
-    '2. sbot capabilities。launchKinds 只有 grok 和 codex。runtimeImplemented 是 false。',
+    '1. 消费方钉在 10e1d2b7ce2d7bee71286b0a1d0672db4a551202。commands.json 与 ae859908 相同。',
+    '2. sbot capabilities。launchKinds 只有 grok 和 codex。runtimeImplemented 是 true，published 仍是 false。',
     '3. sbot request --request-id smoke-1 --text "只读检查" --scope "不改仓库" --acceptance tests',
     '   这是 dry-run。执行阶段停在 kind_unsupported，kind_support 是 rejected，不会改写成 codex。',
     '4. 不要把 hc ls 的输出当成当前模型。模型与额度不进回调。',
@@ -224,7 +224,7 @@ function smoke(): number {
     '6. 回调 POST /v1/callbacks/bac。source 必须是 bot-as-collie，version 必须是整数 1。去重键是 event_id。',
     '7. realE2E 保持 false。fixture 和脚本注入的回调不是端到端。',
     '',
-    JSON.stringify({ profile: BAC_V1.id, launchKinds: BAC_V1.launchKinds, runtimeImplemented: false, realE2E: false }),
+    JSON.stringify({ profile: BAC_V1.id, launchKinds: BAC_V1.launchKinds, runtimeImplemented: true, realE2E: false }),
   ]
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0

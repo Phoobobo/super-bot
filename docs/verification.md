@@ -74,10 +74,10 @@ Engine 现在只在状态已经是 `running` 时写入完成或失败 claim。`p
 
 还缺两样，都不是“没有机器”：一个已登录的 Grok（`XAI_API_KEY` 或完成 `grok login`，本环境没有 auth 文件，也不会代签），以及 Bot 的 `SUPERBOT_BOT_URL`。没有这两样，终态回调到不了 SuperBot，也到不了用户的 Bot。
 
-## 2026-11-24 17:30 UTC 查找 10e1d2b
+## 2026-11-24 17:33 UTC 读到 10e1d2b
 
-本地与 `origin/cursor/real-bac-preflight-872c` 都是 `f09733069ede5794888022ee88b833d12d98d5bd`。`f097330` 的两条 check 已是 success。`realE2E` 仍是 false。
+附件 `grokbot-bridge-herdr-10e1d2b.tar.gz` 的 sha256 是 `36d70b540387a2cc7e23795d503a882407c1f825a6a9085d4544a894b3f0a180`，与清单一致。包内 HEAD 是 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202`。只在 `/tmp/bac-10e1d2b-read` 解压读取，没有改包，没有跑它的测试。
 
-`GET /repos/Phoobobo/grokbot-bridge-herdr/commits/10e1d2b` 返回 422，`No commit found for SHA: 10e1d2b`。该仓库可见分支头是 `main` `4211de848dc8`、`cursor/bac-contract-v1-a131` `ca89d297c1aa`、`cursor/hc-app-placement-309f` `8ea7bf821cc2`、`cursor/hc-backend-8fd4` `410b4c07b7f1`。PR 1–3 的 head 都不是这个前缀。本地保全目录里也没有 `10e1d2b`。因此没有按它改 argv。要继续兼容，需要该提交的完整 SHA，以及其上的 `contracts/bac/v1/commands.json`、`docs/bac/v1/CONTRACT.md`、`contracts/bac/v1/identity.json`。没有重放 17:47 被终止的 `tests/run.sh`、lock、kill 或并发探针。
+`commands.json` 与仓库里钉着的 `ae859908` 副本没有差异，所以 launch、read、handover 的 argv 不改。`identity.json` 把 `runtime_implemented` 改为 true，`published` 仍是 false。`acceptance.json` 的 restart 场景是 `replay_undelivered: false`，投递描述是每个目标一次尝试、跨目标可能重复、重启不重放。消费方本来就按 `event_id` 去重，并且不会补造没收到的回调。`6e3eef3` 的 CI 单独核对为 success，不沿用 `f097330` 的结果。`realE2E` 仍是 false。没有重放 17:47 被终止的探针。
 
 新增的本地 HTTP 回投测试覆盖：Bot POST `/v1/requests` 后 summary 被 POST 回 Bot URL、同一 id 不重复投、失败三次后 `failed`、重启后再投同一 id、错误 owner 不推进。takeover 测试核对授权范围和未知项不执行。`sbot facts` 的默认模型与额度 origin 是 unknown。操作者文件即使自称为 observed，也记成 config。dry-run 不 spawn；live 没有 `allowLive` 会拒绝；live 的 spawn `shell` 为 false，参数里没有 `-m`。这些都不是 Mac 上的 gbb/hc 端到端。

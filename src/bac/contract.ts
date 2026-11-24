@@ -2,18 +2,18 @@ import type { AgentKind } from '../core/model.js'
 
 /**
  * Consumer view of BotAsCollie v1.
- * Frozen at Phoobobo/grokbot-bridge-herdr ae859908ed07684997c786d1744e5f724f087259
- * (parent bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6).
- * The bac binary is not implemented. This profile does not probe a machine.
+ * Pinned to archive 10e1d2b7ce2d7bee71286b0a1d0672db4a551202.
+ * commands.json matches the earlier freeze ae859908ed07684997c786d1744e5f724f087259.
+ * The candidate says the runtime is implemented and not published. This profile does not launch it.
  */
-export const BAC_V1_COMMIT = 'ae859908ed07684997c786d1744e5f724f087259'
-export const BAC_V1_PARENT = 'bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6'
+export const BAC_V1_COMMIT = '10e1d2b7ce2d7bee71286b0a1d0672db4a551202'
+export const BAC_V1_PARENT = 'ae859908ed07684997c786d1744e5f724f087259'
 
 export interface CapabilityProfile {
   id: string
   simulated: boolean
-  /** The bac process itself is not shipped. Consumer argv is ready; live E2E is not. */
-  runtimeImplemented: false
+  /** Candidate identity says the runtime exists. It is not published, and this profile does not run it. */
+  runtimeImplemented: true
   version: 1
   revision: string
   launchKinds: readonly ('codex' | 'grok')[]
@@ -29,7 +29,7 @@ export interface CapabilityProfile {
 export const BAC_V1: CapabilityProfile = {
   id: 'bac-v1',
   simulated: false,
-  runtimeImplemented: false,
+  runtimeImplemented: true,
   version: 1,
   revision: BAC_V1_COMMIT,
   launchKinds: ['codex', 'grok'],

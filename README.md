@@ -15,7 +15,7 @@ Grok Bot 仍然是唯一和人说话的入口。super-bot 不另做聊天壳，�
 
 ## 受 bac v1 契约限制，现在不能当成真的
 
-消费方对照的冻结契约是 `ae859908ed07684997c786d1744e5f724f087259`，父提交 `bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6`。bac 二进制还没有实现。
+消费方钉在保全包 `10e1d2b7ce2d7bee71286b0a1d0672db4a551202`。`commands.json` 与 `ae859908ed07684997c786d1744e5f724f087259` 相同。该候选写明运行时已实现、尚未发布。这里没有把它当成端到端。
 
 - `bac launch --kind` 只有 `grok` 和 `codex`。省略是 `kind_required`。执行阶段的首选仍是 pi，但会被 `kind_unsupported` 拒绝，`kind_support` 为 `rejected`，不会改写成 codex。
 - 只把 `--kind` 白名单放宽也不够。`wait_hc_ready` 对非 codex 要等 OSC 7501 的 `idle`/`done`。pi 会不会报这个状态，这份草稿没有在真实 hc 上看到，所以不能假设补丁一上就能开 pi。见 `docs/gbb/MINIMAL-PATCH.md`。

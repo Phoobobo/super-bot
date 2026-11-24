@@ -22,10 +22,17 @@ describe('frozen bac v1 consumer', () => {
     const source = fs.readFileSync(path.join(root, 'SOURCE.txt'), 'utf8')
     expect(source).toContain(BAC_V1_COMMIT)
     expect(source).toContain(BAC_V1_PARENT)
-    expect(BAC_V1_PARENT).toBe('bbdfc4bbaece3ddafa3a9363b1d0f43b230aa5a6')
-    expect(BAC_V1.runtimeImplemented).toBe(false)
+    expect(BAC_V1_PARENT).toBe('ae859908ed07684997c786d1744e5f724f087259')
+    expect(BAC_V1.runtimeImplemented).toBe(true)
+    const acceptance = read('acceptance.json') as {
+      ran: boolean
+      environment: string
+      scenarios: { id: string; delivery?: string; replay_undelivered?: boolean }[]
+    }
+    const restart = acceptance.scenarios.find((item) => item.id === 'restart')
+    expect(restart?.replay_undelivered).toBe(false)
+    expect(restart?.delivery).toBe('per_target_one_attempt_cross_target_duplicate_possible_no_restart_replay')
     expect(BAC_V1.launchKinds).toEqual(['codex', 'grok'])
-    const acceptance = read('acceptance.json') as { ran: boolean; environment: string }
     expect(acceptance.ran).toBe(false)
     expect(acceptance.environment).toBe('fixture')
   })
